@@ -1,0 +1,22 @@
+data/
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+node_modules/
+.DS_Store
+.ruff_cache/
+.pytest_cache/
+.coverage*
+htmlcov/
+*.sqlite3
+*.sqlite3-*
+*.sqlite
+*.db
+*.db-*
+*.key
+*.log
+# Keep original REA evidence immutable and local; publish a path-free manifest.
+docs/research/*-evidence.json
+docs/research/*-summary.json

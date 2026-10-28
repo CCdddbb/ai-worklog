@@ -1,0 +1,169 @@
+// Optional real-browser smoke test. Uses an already installed Playwright Core.
+const assert = require("node:assert/strict");
+const { spawn, spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
+const { once } = require("node:events");
+const path = require("node:path");
+const { chromium } = require(
+	process.env.PLAYWRIGHT_CORE_PATH || "playwright-core",
+);
+
+const root = path.resolve(__dirname, "..");
+const summaryMode = process.env.WORKLOG_SUMMARY_FIXTURE === "1";
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), "worklog-browser-"));
+const database = path.join(temp, "demo.sqlite3");
+const prepared = spawnSync(
+	"python3",
+	["app.py", "demo", "--db", database, "--date", "2026-10-28"],
+	{
+		cwd: root,
+		env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
+		stdio: "ignore",
+	},
+);
+assert.equal(prepared.status, 0, "Synthetic demo setup failed");
+const child = spawn(
+	"python3",
+	summaryMode
+		? ["tests/summary_fixture.py"]
+		: [
+				"app.py",
+				"serve",
+				"--db",
+				database,
+				"--date",
+				"2026-10-28",
+				"--port",
+				"0",
+			],
+	{
+		cwd: root,
+		env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PYTHONPATH: root },
+		stdio: ["ignore", "pipe", "pipe"],
+	},
+);
+let browser;
+async function main() {
+	let output = "";
+	const url = await new Promise((resolve, reject) => {
+		const timer = setTimeout(
+			() => reject(new Error("Local test server startup timed out")),
+			12000,
+		);
+		child.stdout.on("data", (chunk) => {
+			output += chunk.toString();
+			const match = output.match(
+				/http:\/\/127\.0\.0\.1:\d+\/#token=[A-Za-z0-9_-]+/,
+			);
+			if (match) {
+				clearTimeout(timer);
+				resolve(match[0]);
+			}
+		});
+		child.once("error", reject);
+		child.once("exit", () =>
+			reject(new Error("Local server exited before readiness")),
+		);
+	});
+	const base = new URL(url).origin;
+	browser = await chromium.launch({ channel: "chrome", headless: true });
+	const page = await browser.newPage({
+		viewport: { width: 1440, height: 1050 },
+	});
+	const external = [];
+	const errors = [];
+	page.on("pageerror", (error) => errors.push(error.message));
+	await page.route("**/*", (route) => {
+		if (!route.request().url().startsWith(`${base}/`)) {
+			external.push("unexpected external request");
+			return route.abort();
+		}
+		return route.continue();
+	});
+	await page.goto(url);
+	await page.waitForFunction(
+		() => document.querySelector("#requests").textContent === "4",
+	);
+	assert.equal(await page.locator("#tokens").textContent(), "4,200");
+	assert.match(await page.locator("#status").textContent(), /演示模式/);
+	await page.screenshot({
+		path: path.join(root, "docs/dashboard-demo.png"),
+		fullPage: true,
+	});
+	await page.locator("[data-view=report]").click();
+	await page.waitForFunction(() =>
+		document.querySelector("#report-text").textContent.includes("AI 工作日报"),
+	);
+	const pendingDownload = page.waitForEvent("download");
+	await page.locator("#download").click();
+	const download = await pendingDownload;
+	assert.equal(download.suggestedFilename(), "ai-worklog-2026-10-28.md");
+	if (summaryMode) {
+		await page.locator("[data-view=tasks]").click();
+		await page.waitForFunction(
+			() => !document.querySelector("#task-create").disabled,
+		);
+		await page.locator("#task-title").fill("虚构跨会话配置排查");
+		for (const check of await page.locator("#task-sessions input").all())
+			await check.check();
+		await page.locator("#task-create").click();
+		await page
+			.getByRole("button", { name: "预览当前材料", exact: true })
+			.click();
+		await page.waitForFunction(() =>
+			document
+				.querySelector("#task-preview")
+				.textContent.includes("selected_events"),
+		);
+		page.once("dialog", (dialog) => dialog.accept());
+		await page.getByRole("button", { name: "结束并总结", exact: true }).click();
+		await page.waitForFunction(() =>
+			document.querySelector("#task-list").textContent.includes("AI草稿已生成"),
+		);
+		assert.match(await page.locator("#task-list").textContent(), /用户已结束/);
+		await page.screenshot({
+			path: path.join(root, "docs/task-summary-demo.png"),
+			fullPage: true,
+		});
+		await page.locator("[data-view=report]").click();
+		await page.waitForFunction(() =>
+			document
+				.querySelector("#report-text")
+				.textContent.includes("LLM任务总结"),
+		);
+	}
+	await page.locator("[data-view=sources]").click();
+	assert.match(await page.locator("#coverage").textContent(), /synthetic/);
+	await page.setViewportSize({ width: 390, height: 844 });
+	assert.ok(
+		await page.evaluate(
+			() => document.documentElement.scrollWidth <= window.innerWidth,
+		),
+	);
+	assert.deepEqual(errors, []);
+	assert.deepEqual(external, []);
+	console.log(
+		"Browser smoke passed: dashboard, report, export, privacy, responsive layout, no external requests.",
+	);
+}
+main()
+	.catch((error) => {
+		console.error(error.message);
+		process.exitCode = 1;
+	})
+	.finally(async () => {
+		if (browser) await browser.close();
+		if (child.exitCode === null) {
+			child.kill("SIGINT");
+			await Promise.race([
+				once(child, "exit"),
+				new Promise((resolve) => setTimeout(resolve, 3000)),
+			]);
+			if (child.exitCode === null) {
+				child.kill("SIGKILL");
+				await once(child, "exit");
+			}
+		}
+		fs.rmSync(temp, { recursive: true, force: true });
+	});

@@ -1,0 +1,34 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.9', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Offline unit and integration tests
+        run: python -m unittest discover -s tests -v
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+      - name: Browser JavaScript syntax
+        run: |
+          node --check static/app.js
+          node --check static/tasks.js
+          node --check tests/browser-smoke.cjs

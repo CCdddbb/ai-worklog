@@ -1,0 +1,9 @@
+[project]
+name = "ai-worklog-local"
+version = "0.2.0"
+description = "Local AI activity dashboard with opt-in, evidence-grounded Pi task summaries"
+requires-python = ">=3.9"
+dependencies = []
+
+[tool.ruff]
+target-version = "py39"

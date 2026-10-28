@@ -1,0 +1,39 @@
+{
+	"kind": "derived-public-research-record",
+	"tool": "REA",
+	"toolVersion": "6.8.0",
+	"nodeVersion": "22.23.4",
+	"operation": "analyze-javascript-application",
+	"commandTemplate": "rea analyze-javascript-application <checkout> --source-path <selected-file> --detail summary --evidence_output <new-local-file> --format json",
+	"originalEvidencePublished": false,
+	"limitations": [
+		"This manifest is a derived record, not an authenticated original REA Evidence bundle.",
+		"Only selected files were statically analyzed; unselected files and dynamic behavior remain unknown.",
+		"No WakaTime plugin code was executed and no proprietary backend was reconstructed.",
+		"Artifact digests identify the original captured inputs; different checkout environments may produce different artifact identities."
+	],
+	"sources": [
+		{
+			"repository": "https://github.com/wakatime/vscode-wakatime",
+			"commit": "ec6de79aaccf3870f525332efd5fe379604dd1c1",
+			"selectedFile": "src/wakatime.ts",
+			"parsedFiles": 1,
+			"unselectedFiles": 21,
+			"parseFailures": 0,
+			"capturedArtifactSha256": "3101700b12eea89d36e25ba49958fc98877e2c28e039575b250e012ce9af3d62",
+			"parentEvidenceId": "ev_9a8a88bbe16d139e95ffd8c992b06f45039b8e9d63636a64d9df9a84ed12fefb",
+			"localLicenseCopy": "VSCode-WakaTime-LICENSE.txt"
+		},
+		{
+			"repository": "https://github.com/wakatime/codex-cli-wakatime",
+			"commit": "a0218436d549915c521287b9436782891e75e856",
+			"selectedFile": "bin/codex-cli-wakatime.js",
+			"parsedFiles": 1,
+			"unselectedFiles": 4,
+			"parseFailures": 0,
+			"capturedArtifactSha256": "e8592cadeb96851c134c7f8daab3bb2858541dfbbe2e7a9a4864c8201e59dcab",
+			"parentEvidenceId": "ev_fbd0408ebe95126d66d2f9c0652b14a65de758550900d32fb99215cd16e1d979",
+			"localLicenseCopy": "Codex-WakaTime-LICENSE.txt"
+		}
+	]
+}
