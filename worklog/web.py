@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .core import bounds
-from .store import markdown, report_data
+from .store import markdown, period_markdown, report_data
 
 STATIC = Path(__file__).resolve().parents[1] / 'static'
 
@@ -77,7 +77,12 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                     if url.path == '/api/day':
                         self.send(200, data)
                     else:
-                        self.send(200, markdown(data), 'text/plain; charset=utf-8')
+                        period = query.get('period', ['day'])[0]
+                        if period not in ('day', 'week', 'month'):
+                            raise ValueError('Invalid period')
+                        self.send(200, markdown(data) if period == 'day' else
+                                  period_markdown(db_path, target_day, zone, period),
+                                  'text/plain; charset=utf-8')
             except (ValueError, OverflowError):
                 self.send(400, {'error': 'invalid_date_or_scope'})
             except (OSError, sqlite3.Error):
@@ -87,7 +92,7 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
             if not self.access(mutation=True):
                 return
             path = urlsplit(self.path).path
-            if path not in ['/api/tasks', '/api/summarize']:
+            if path not in ['/api/tasks', '/api/summarize', '/api/task-review']:
                 self.send(404, {'error': 'not_found'})
                 return
             if not task_service:
@@ -109,6 +114,11 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                     result = task_service.create(body.get('title'), body.get('sessions'),
                                                  body.get('date', day), body.get('start_time', '00:00'))
                     self.send(201, result)
+                elif path == '/api/task-review':
+                    if set(body) != {'task_id', 'status', 'outcome', 'learnings', 'next_steps', 'verification', 'commit_ids'}:
+                        raise ValueError('Invalid review fields')
+                    self.send(200, task_service.review(body['task_id'], body['status'], body['outcome'],
+                        body['learnings'], body['next_steps'], body['verification'], body['commit_ids']))
                 else:
                     if set(body) - {'task_id', 'mode', 'retry'} or type(body.get('retry', False)) is not bool:
                         raise ValueError('Unknown fields')

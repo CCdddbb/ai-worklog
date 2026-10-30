@@ -10,6 +10,9 @@ const { chromium } = require(
 );
 
 const root = path.resolve(__dirname, "..");
+const screenshotDir =
+	process.env.WORKLOG_SCREENSHOT_DIR || path.join(root, "docs");
+fs.mkdirSync(screenshotDir, { recursive: true });
 const summaryMode = process.env.WORKLOG_SUMMARY_FIXTURE === "1";
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "worklog-browser-"));
 const database = path.join(temp, "demo.sqlite3");
@@ -85,10 +88,21 @@ async function main() {
 	await page.waitForFunction(
 		() => document.querySelector("#requests").textContent === "4",
 	);
+	assert.equal(await page.locator("#task-focus").isVisible(), true);
+	await page.waitForFunction(
+		() => document.querySelector("#overview-tasks").textContent === "0",
+	);
+	assert.equal(await page.locator("#overview-confirmed").textContent(), "0");
+	assert.equal(await page.locator("#overview-untriaged").textContent(), "2");
+	assert.equal(
+		await page.locator("[data-view=overview]").getAttribute("aria-current"),
+		"page",
+	);
+	assert.match(await page.locator("#task-focus").textContent(), /待整理会话/);
 	assert.equal(await page.locator("#tokens").textContent(), "4,200");
 	assert.match(await page.locator("#status").textContent(), /演示模式/);
 	await page.screenshot({
-		path: path.join(root, "docs/dashboard-demo.png"),
+		path: path.join(screenshotDir, "dashboard-demo.png"),
 		fullPage: true,
 	});
 	await page.locator("[data-view=report]").click();
@@ -98,7 +112,7 @@ async function main() {
 	const pendingDownload = page.waitForEvent("download");
 	await page.locator("#download").click();
 	const download = await pendingDownload;
-	assert.equal(download.suggestedFilename(), "ai-worklog-2026-10-28.md");
+	assert.equal(download.suggestedFilename(), "ai-worklog-day-2026-10-28.md");
 	if (summaryMode) {
 		await page.locator("[data-view=tasks]").click();
 		await page.waitForFunction(
@@ -122,25 +136,80 @@ async function main() {
 			document.querySelector("#task-list").textContent.includes("AI草稿已生成"),
 		);
 		assert.match(await page.locator("#task-list").textContent(), /用户已结束/);
-		await page.screenshot({
-			path: path.join(root, "docs/task-summary-demo.png"),
-			fullPage: true,
-		});
+		await page.locator(".review-status").first().selectOption("confirmed");
+		await page
+			.locator(".review-outcome")
+			.first()
+			.fill("已核对登录回调的处理结果");
+		await page
+			.locator(".review-learnings")
+			.first()
+			.fill("先明确输入边界再验证");
+		await page.locator(".review-verification").first().fill("本地测试通过");
+		await page.locator("#refresh").click();
+		await page.waitForTimeout(200);
+		assert.equal(
+			await page.locator(".review-outcome").first().inputValue(),
+			"已核对登录回调的处理结果",
+		);
+		await page.locator(".review-save").first().click();
+		await page.waitForFunction(
+			() => document.querySelector("#overview-confirmed").textContent === "1",
+		);
+		await page.locator("[data-view=overview]").click();
+		assert.match(
+			await page.locator("#task-focus").textContent(),
+			/已核对登录回调/,
+		);
+		assert.equal(await page.locator("#overview-tasks").textContent(), "1");
+		assert.equal(await page.locator("#overview-confirmed").textContent(), "1");
+		assert.equal(await page.locator("#overview-untriaged").textContent(), "0");
 		await page.locator("[data-view=report]").click();
 		await page.waitForFunction(() =>
 			document
 				.querySelector("#report-text")
 				.textContent.includes("LLM任务总结"),
 		);
+		await page.locator("#report-period").selectOption("week");
+		await page.waitForFunction(() =>
+			document
+				.querySelector("#report-text")
+				.textContent.includes("AI 工作周报"),
+		);
+		await page.locator("[data-view=tasks]").click();
+		await page.screenshot({
+			path: path.join(screenshotDir, "task-summary-demo.png"),
+			fullPage: true,
+		});
 	}
 	await page.locator("[data-view=sources]").click();
 	assert.match(await page.locator("#coverage").textContent(), /synthetic/);
+	for (const width of [320, 390, 768, 1440]) {
+		await page.setViewportSize({ width, height: 900 });
+		for (const view of ["overview", "tasks", "report", "usage", "sources"]) {
+			await page.locator(`[data-view=${view}]`).click();
+			assert.equal(await page.locator(`#${view}`).isVisible(), true);
+			assert.equal(
+				await page.locator(`[data-view=${view}]`).getAttribute("aria-current"),
+				"page",
+			);
+			assert.equal(await page.locator("nav [aria-current=page]").count(), 1);
+			assert.ok(
+				await page.evaluate(
+					() => document.documentElement.scrollWidth <= window.innerWidth,
+				),
+				`${view} overflow at ${width}px`,
+			);
+		}
+	}
 	await page.setViewportSize({ width: 390, height: 844 });
-	assert.ok(
-		await page.evaluate(
-			() => document.documentElement.scrollWidth <= window.innerWidth,
-		),
-	);
+	await page.locator("[data-view=overview]").click();
+	await page.screenshot({
+		path: path.join(screenshotDir, "dashboard-mobile.png"),
+		fullPage: true,
+	});
+	await page.locator("#open-tasks").click();
+	assert.equal(await page.locator("#heading").textContent(), "任务记录");
 	assert.deepEqual(errors, []);
 	assert.deepEqual(external, []);
 	console.log(

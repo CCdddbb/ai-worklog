@@ -44,6 +44,28 @@ def connect(path):
     if 'started_at' not in {row[1] for row in db.execute('PRAGMA table_info(summaries)')}:
         db.execute('ALTER TABLE summaries ADD COLUMN started_at REAL')
     db.execute('CREATE INDEX IF NOT EXISTS summaries_task ON summaries(task_id, created_at)')
+    db.execute('''CREATE TABLE IF NOT EXISTS task_reviews (
+        task_id TEXT PRIMARY KEY, status TEXT NOT NULL, outcome TEXT NOT NULL,
+        learnings TEXT NOT NULL, next_steps TEXT NOT NULL, verification TEXT NOT NULL,
+        updated_at REAL NOT NULL)''')
+    db.execute('''CREATE TABLE IF NOT EXISTS git_commits (
+        id TEXT PRIMARY KEY, project TEXT NOT NULL, ts REAL NOT NULL,
+        subject TEXT NOT NULL, files_changed INTEGER NOT NULL,
+        additions INTEGER NOT NULL, deletions INTEGER NOT NULL)''')
+    db.execute('CREATE INDEX IF NOT EXISTS git_commits_time ON git_commits(ts)')
+    db.execute('''CREATE TABLE IF NOT EXISTS task_git (
+        task_id TEXT NOT NULL, commit_id TEXT NOT NULL,
+        PRIMARY KEY(task_id, commit_id))''')
+    db.execute('''CREATE TABLE IF NOT EXISTS review_state (
+        scope TEXT PRIMARY KEY, start_ts REAL, cursor_ts REAL, excerpts INTEGER)''')
+    db.execute('''CREATE TABLE IF NOT EXISTS review_seen (
+        scope TEXT, event_id TEXT, digest TEXT, review_id TEXT,
+        PRIMARY KEY(scope, event_id))''')
+    db.execute('''CREATE TABLE IF NOT EXISTS review_cache (
+        fingerprint TEXT PRIMARY KEY, output_json TEXT, usage_json TEXT)''')
+    db.execute('''CREATE TABLE IF NOT EXISTS reviews (
+        id TEXT PRIMARY KEY, scope TEXT, start_ts REAL, end_ts REAL,
+        created_at REAL, output TEXT, coverage_json TEXT, provider TEXT, model TEXT)''')
     return db
 
 
@@ -56,7 +78,10 @@ def salt(path):
         db = connect(path)
         try:
             if (db.execute('SELECT COUNT(*) FROM events').fetchone()[0]
-                    or db.execute('SELECT COUNT(*) FROM tasks').fetchone()[0]):
+                    or db.execute('SELECT COUNT(*) FROM tasks').fetchone()[0]
+                    or db.execute('SELECT COUNT(*) FROM git_commits').fetchone()[0]
+                    or db.execute('SELECT COUNT(*) FROM review_state').fetchone()[0]
+                    or db.execute('SELECT COUNT(*) FROM reviews').fetchone()[0]):
                 raise ValueError('Identity key missing for existing events; restore it instead of re-keying')
         finally:
             db.close()
@@ -112,6 +137,18 @@ def report_data(path, day, zone):
                                'status': task['status'], 'provider': job['provider'], 'model': job['model'],
                                'coverage': captured['coverage'], 'result': json.loads(job['output_json'])})
         data['task_summaries'] = drafts
+        reviews = []
+        for row in db.execute('''SELECT t.id, t.title, r.status, r.outcome, r.learnings,
+                                      r.next_steps, r.verification, r.updated_at
+                               FROM tasks t JOIN task_reviews r ON r.task_id=t.id
+                               WHERE t.day=? ORDER BY t.start_ts, t.id''', (day,)):
+            item = dict(row)
+            item['commits'] = [dict(commit) for commit in db.execute(
+                '''SELECT c.id, c.subject, c.files_changed, c.additions, c.deletions
+                   FROM task_git l JOIN git_commits c ON c.id=l.commit_id
+                   WHERE l.task_id=? ORDER BY c.ts, c.id''', (row['id'],))]
+            reviews.append(item)
+        data['task_reviews'] = reviews
         if drafts:
             data['limitations'][-1] = 'LLM总结为证据范围内的待审草稿，引用有效不等于成果已验证。'
         return data
@@ -153,9 +190,26 @@ def markdown(data):
                 for item in items:
                     lines.append(f'- {name}：{safe(item["text"])} （证据：{", ".join(item["evidence_ids"])}）')
             lines.append('')
-    lines += ['', '## 已确认成果 / 阻塞 / 明日计划', '',
-              '- 待人工补充；本原型不根据模型正常结束虚构任务完成。', '', '## 数据覆盖', '']
+    lines += ['', '## 人工审阅的任务', '']
+    if data.get('task_reviews'):
+        for review in data['task_reviews']:
+            status = {'confirmed': '已确认', 'in_progress': '进行中', 'blocked': '受阻'}[review['status']]
+            lines.append(f'- {safe_markdown(review["title"])}（{status}）：{safe_markdown(review["outcome"])}')
+            for key, label in [('learnings', '经验'), ('verification', '验证'), ('next_steps', '下一步')]:
+                if review[key]:
+                    lines.append(f'  - {label}：{safe_markdown(review[key])}')
+            for commit in review['commits']:
+                lines.append(f'  - 关联 Git 提交：{commit["id"][:12]} · {safe_markdown(commit["subject"])}；'
+                             f'{commit["files_changed"]} 个文件，+{commit["additions"]}/-{commit["deletions"]} 行。'
+                             '关联由用户选择，不代表测试或验收通过。')
+    else:
+        lines.append('- 待人工补充；AI草稿不自动算作成果。')
+    lines += ['', '## 数据覆盖', '']
     for source, coverage in data['coverage'].items():
+        if source.startswith('git:'):
+            lines.append(f'- {source}：最近导入日期 {coverage.get("date")}，扫描 {coverage.get("selected", 0)} 个提交，'
+                         f'超过上限：{"是" if coverage.get("more_commits") else "否"}。')
+            continue
         lines.append(f'- {source}：最近导入日期 {coverage.get("date")}，读取 {coverage.get("selected", 0)} 个文件，'
                      f'未选 {coverage.get("omitted_files", 0)} 个，过大 {coverage.get("oversized_files", 0)} 个，'
                      f'格式错误 {coverage.get("malformed_lines", 0)} 行，未完整写入 {coverage.get("partial_lines", 0)} 行。')
@@ -167,4 +221,51 @@ def markdown(data):
             if coverage.get(key):
                 lines.append(f'  - {name}：{coverage[key]}。')
     lines += ['', '## 口径与限制', ''] + ['- ' + s for s in data['limitations']]
+    return '\n'.join(lines) + '\n'
+
+
+def safe_markdown(value):
+    return str(value).replace('<', '＜').replace('>', '＞').replace('[', '［').replace(']', '］').replace('`', '｀').replace('\n', ' ')
+
+
+def period_markdown(path, day, zone, period):
+    from datetime import date, timedelta
+    import calendar
+    selected = date.fromisoformat(day)
+    if period == 'week':
+        first = selected - timedelta(days=selected.weekday())
+        last = first + timedelta(days=6)
+        label = '周报'
+    elif period == 'month':
+        first = selected.replace(day=1)
+        last = selected.replace(day=calendar.monthrange(selected.year, selected.month)[1])
+        label = '月报'
+    else:
+        raise ValueError('Invalid report period')
+    days = []
+    cursor = first
+    while cursor <= last:
+        days.append(report_data(path, cursor.isoformat(), zone))
+        cursor += timedelta(days=1)
+    lines = [f'# AI 工作{label} · {first} 至 {last}', '', '## 人工审阅的任务', '']
+    count = 0
+    for data in days:
+        for review in data['task_reviews']:
+            count += 1
+            lines.extend([f'### {data["date"]} · {safe_markdown(review["title"])}', ''])
+            lines.append('- 状态：' + {'confirmed': '已确认', 'in_progress': '进行中',
+                                      'blocked': '受阻'}[review['status']])
+            lines.append(f'- 工作结果：{safe_markdown(review["outcome"])}')
+            for key, label_name in [('learnings', '经验收获'), ('verification', '验证方式'), ('next_steps', '下一步')]:
+                if review[key]:
+                    lines.append(f'- {label_name}：{safe_markdown(review[key])}')
+            for commit in review['commits']:
+                lines.append(f'- 关联提交：{commit["id"][:12]} · {safe_markdown(commit["subject"])}')
+            lines.append('')
+    if not count:
+        lines.append('- 本周期没有人工审阅的任务。')
+    lines += ['', '## 活动统计（仅供参考）', '',
+              f'- 已导入会话活动 {sum(day["event_count"] for day in days)} 条，模型回复 {sum(day["request_count"] for day in days)} 条。',
+              f'- 记录 Token {sum(day["tokens"] for day in days):,}；此数字不代表工作成果或实际费用。',
+              '', '未记录在 AI 会话中的工作以及未导入的日期不在统计范围内；人工确认状态由用户填写。']
     return '\n'.join(lines) + '\n'

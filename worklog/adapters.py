@@ -1,4 +1,5 @@
 """Read selected JSONL files; never execute hooks or retain message bodies."""
+import codecs
 import json
 import re
 from pathlib import Path
@@ -9,7 +10,37 @@ MAX_FILE = 64 * 1024 * 1024
 MAX_LINE = 2 * 1024 * 1024
 
 
-def records(path, stats):
+def prefix_timestamp(raw):
+    """Read only top-level fields before a truncated value, never nested text matches."""
+    try:
+        text = codecs.getincrementaldecoder('utf-8')().decode(raw, final=False)
+        decoder = json.JSONDecoder()
+        index = 0
+        def whitespace(pos):
+            while pos < len(text) and text[pos] in ' \r\n\t':
+                pos += 1
+            return pos
+        index = whitespace(index)
+        if text[index] != '{':
+            return None
+        index += 1
+        while True:
+            name, index = decoder.raw_decode(text, whitespace(index))
+            index = whitespace(index)
+            if not isinstance(name, str) or text[index] != ':':
+                return None
+            value, index = decoder.raw_decode(text, whitespace(index + 1))
+            if name == 'timestamp':
+                return timestamp(value)
+            index = whitespace(index)
+            if text[index] != ',':
+                return None
+            index += 1
+    except (ValueError, UnicodeDecodeError, IndexError, RecursionError):
+        return None
+
+
+def records(path, stats, window=None):
     with path.open('rb') as stream:
         consumed = 0
         number = 0
@@ -23,7 +54,12 @@ def records(path, stats):
                 stats['truncated_files'] += 1
                 break
             if len(line) > MAX_LINE:
-                stats['oversized_lines'] += 1
+                ts = prefix_timestamp(line) if window else None
+                if window and ts is not None and not window[0] <= ts <= window[1]:
+                    name = 'out_of_window_oversized_lines'
+                    stats[name] = stats.get(name, 0) + 1
+                else:
+                    stats['oversized_lines'] += 1
                 while line and not line.endswith(b'\n'):
                     line = stream.readline(MAX_LINE + 1)
                     consumed += len(line)
@@ -54,13 +90,13 @@ def event(salt, source, session, project, record_id, ts, kind, provider='unknown
     return row
 
 
-def pi_events(path, salt, stats, titles=False):
+def pi_events(path, salt, stats, titles=False, window=None):
     session = str(path)
     project = 'unknown'
     provider, model = 'unknown', 'unknown'
     file_id = identity(salt, str(path))[:16]
     result = []
-    for number, entry in records(path, stats):
+    for number, entry in records(path, stats, window):
         typ = entry.get('type')
         if typ == 'session':
             session = entry.get('id') if isinstance(entry.get('id'), str) else str(path)
@@ -108,13 +144,13 @@ def pi_events(path, salt, stats, titles=False):
     return result
 
 
-def codex_events(path, salt, stats, titles=False):
+def codex_events(path, salt, stats, titles=False, window=None):
     session, project = str(path), 'unknown'
     provider, model = 'codex', 'unknown'
     file_id = identity(salt, str(path))[:16]
     result, direct, legacy = [], [], []
     previous = None
-    for number, entry in records(path, stats):
+    for number, entry in records(path, stats, window):
         typ = entry.get('type')
         payload = mapping(entry.get('payload'))
         if typ == 'session_meta':
@@ -175,7 +211,7 @@ def codex_events(path, salt, stats, titles=False):
     return result + (direct if direct else legacy)
 
 
-def collect(root, source, salt, titles=False, max_files=100):
+def collect(root, source, salt, titles=False, max_files=100, window=None):
     root = Path(root).expanduser().resolve()
     if not root.is_dir() or source not in ['pi', 'codex']:
         raise ValueError('Choose an existing Pi/Codex session directory')
@@ -204,7 +240,7 @@ def collect(root, source, salt, titles=False, max_files=100):
                 continue
             stats['selected'] += 1
             parser = pi_events if source == 'pi' else codex_events
-            events.extend(parser(path, salt, stats, titles))
+            events.extend(parser(path, salt, stats, titles, window))
         except OSError:
             stats['unreadable_files'] += 1
     stats['source'] = source

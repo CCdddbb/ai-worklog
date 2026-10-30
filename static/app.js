@@ -40,6 +40,11 @@ function url(path) {
 		($("date").value ? `?date=${encodeURIComponent($("date").value)}` : "")
 	);
 }
+function reportUrl() {
+	const params = new URLSearchParams({ period: $("report-period").value });
+	if ($("date").value) params.set("date", $("date").value);
+	return `/api/report?${params}`;
+}
 function render(value) {
 	data = value;
 	zone = value.timezone;
@@ -143,6 +148,9 @@ function render(value) {
 async function load() {
 	if (loading) return;
 	loading = true;
+	$("refresh").disabled = true;
+	$("refresh").textContent = "刷新中…";
+	$("main-content").setAttribute("aria-busy", "true");
 	try {
 		render(await (await api(url("/api/day"))).json());
 		if (!$("report").classList.contains("hidden")) await loadReport();
@@ -151,43 +159,66 @@ async function load() {
 		$("status").className = "error";
 	} finally {
 		loading = false;
+		$("refresh").disabled = false;
+		$("refresh").textContent = "刷新";
+		$("main-content").setAttribute("aria-busy", "false");
 	}
 }
 async function loadReport() {
-	$("report-text").textContent = await (await api(url("/api/report"))).text();
+	$("report-text").textContent = await (await api(reportUrl())).text();
 }
 $("date").addEventListener("change", load);
 $("refresh").addEventListener("click", load);
+$("report-period").addEventListener("change", async () => {
+	if (!$("report").classList.contains("hidden")) await loadReport();
+});
 $("download").addEventListener("click", async () => {
 	try {
-		const text = await (await api(url("/api/report"))).text();
+		const period = $("report-period").value;
+		const text = await (await api(reportUrl())).text();
 		const blob = URL.createObjectURL(
 			new Blob([text], { type: "text/markdown;charset=utf-8" }),
 		);
 		const a = element("a");
 		a.href = blob;
-		a.download = `ai-worklog-${data ? data.date : "report"}.md`;
+		a.download = `ai-worklog-${period}-${data ? data.date : "report"}.md`;
 		a.click();
 		setTimeout(() => URL.revokeObjectURL(blob), 1000);
 	} catch (error) {
 		$("status").textContent = error.message;
 	}
 });
-for (const button of document.querySelectorAll("nav button")) {
-	button.addEventListener("click", async () => {
-		for (const other of document.querySelectorAll("nav button"))
-			other.classList.toggle("active", other === button);
-		for (const view of document.querySelectorAll(".view"))
-			view.classList.toggle("hidden", view.id !== button.dataset.view);
-		$("heading").textContent = button.textContent.slice(2).trim();
-		if (button.dataset.view === "report") {
-			try {
-				await loadReport();
-			} catch (error) {
-				$("status").textContent = error.message;
-			}
+async function showView(button) {
+	for (const other of document.querySelectorAll("nav button")) {
+		other.classList.toggle("active", other === button);
+		if (other === button) other.setAttribute("aria-current", "page");
+		else other.removeAttribute("aria-current");
+	}
+	for (const view of document.querySelectorAll(".view"))
+		view.classList.toggle("hidden", view.id !== button.dataset.view);
+	$("heading").textContent =
+		button.querySelector("span:last-child").textContent;
+	const descriptions = {
+		overview: "从工作任务回看成果、证据和下一步。",
+		tasks: "串联工作上下文，审阅并记录每一份成果。",
+		report: "让经过确认的工作，成为值得回看的记录。",
+		usage: "了解 AI 协作的节奏，让数据回到真实语境。",
+		sources: "清楚了解数据从哪里来，以及它的使用边界。",
+	};
+	$("view-description").textContent = descriptions[button.dataset.view];
+	if (button.dataset.view === "report") {
+		try {
+			await loadReport();
+		} catch (error) {
+			$("status").textContent = error.message;
 		}
-	});
+	}
 }
+for (const button of document.querySelectorAll("nav button")) {
+	button.addEventListener("click", () => showView(button));
+}
+$("open-tasks").addEventListener("click", () =>
+	showView(document.querySelector('[data-view="tasks"]')),
+);
 load();
 setInterval(load, 30000);

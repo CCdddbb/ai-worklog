@@ -89,6 +89,8 @@ class TaskService:
         if task['end_ts'] is not None:
             end = min(end, task['end_ts'])
         sessions = json.loads(task['sessions'])
+        if not sessions:
+            return []
         marks = ','.join('?' for _ in sessions)
         db = connect(self.path)
         try:
@@ -101,9 +103,9 @@ class TaskService:
     def create(self, title, sessions, day, start_time='00:00', internal_start=None):
         if not isinstance(title, str) or not 1 <= len(title.strip()) <= 150:
             raise ValueError('Task title required')
-        if not isinstance(sessions, list) or not 1 <= len(sessions) <= 12 or any(
+        if not isinstance(sessions, list) or not 0 <= len(sessions) <= 12 or any(
                 not isinstance(s, str) or not re.fullmatch(r'[a-f0-9]{16}', s) for s in sessions):
-            raise ValueError('Select 1-12 known sessions')
+            raise ValueError('Select up to 12 known sessions')
         start, end = bounds(day, self.zone)
         if not isinstance(start_time, str) or not re.fullmatch(r'(?:[01][0-9]|2[0-3]):[0-5][0-9]', start_time):
             raise ValueError('Invalid task start time')
@@ -140,6 +142,10 @@ class TaskService:
             return snapshot(task, self._rows(task), self.roots, self.key, self.allow_excerpts)
 
     def request(self, task_id, mode='stage', retry=False):
+        if self.runner is None:
+            raise ValueError('Summary model is not enabled')
+        if not json.loads(self._task(task_id)['sessions']):
+            raise ValueError('Manual task has no AI evidence to summarize')
         if mode not in ['stage', 'final']:
             raise ValueError('Invalid summary mode')
         with self.guard:
@@ -184,9 +190,17 @@ class TaskService:
         db = connect(self.path)
         try:
             tasks = []
+            start, end = bounds(day, self.zone)
+            commits = [dict(row) for row in db.execute(
+                'SELECT id,subject,files_changed,additions,deletions FROM git_commits WHERE ts>=? AND ts<? ORDER BY ts DESC,id',
+                (start, end))]
             for row in db.execute('SELECT * FROM tasks WHERE day=? ORDER BY created_at DESC LIMIT 100', (day,)):
                 task = dict(row)
                 task['sessions'] = json.loads(task['sessions'])
+                reviewed = db.execute('SELECT * FROM task_reviews WHERE task_id=?', (task['id'],)).fetchone()
+                task['review'] = dict(reviewed) if reviewed else None
+                task['commit_ids'] = [linked[0] for linked in db.execute(
+                    'SELECT commit_id FROM task_git WHERE task_id=?', (task['id'],))]
                 job = db.execute('SELECT id,mode,status,error,provider,model,created_at,finished_at,output_json,usage_json '
                                  'FROM summaries WHERE task_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1', (task['id'],)).fetchone()
                 task['summary'] = dict(job) if job else None
@@ -196,10 +210,49 @@ class TaskService:
                 tasks.append(task)
             today = datetime.fromtimestamp(self.clock(), ZoneInfo(self.zone)).date().isoformat()
             runs_today = db.execute('SELECT COUNT(*) FROM summaries WHERE started_at>=? AND started_at<?', bounds(today, self.zone)).fetchone()[0]
-            return {'tasks': tasks, 'enabled': True, 'auto': self.auto, 'allow_excerpts': self.allow_excerpts,
+            return {'tasks': tasks, 'commits': commits, 'enabled': True, 'llm_enabled': self.runner is not None,
+                    'auto': self.auto, 'allow_excerpts': self.allow_excerpts,
                     'runs_today': runs_today,
                     'idle_minutes': self.idle_seconds / 60, 'daily_limit': self.daily_limit,
-                    'provider': self.runner.provider, 'model': self.runner.model}
+                    'provider': self.runner.provider if self.runner else None,
+                    'model': self.runner.model if self.runner else None}
+        finally:
+            db.close()
+
+    def review(self, task_id, status, outcome, learnings='', next_steps='', verification='', commit_ids=None):
+        task = self._task(task_id)
+        if status not in ('confirmed', 'in_progress', 'blocked'):
+            raise ValueError('Invalid review status')
+        fields = [outcome, learnings, next_steps, verification]
+        if any(not isinstance(value, str) or len(value) > 2000 for value in fields):
+            raise ValueError('Invalid review text')
+        if status == 'confirmed' and not outcome.strip():
+            raise ValueError('Confirmed outcome required')
+        commit_ids = commit_ids if commit_ids is not None else []
+        if not isinstance(commit_ids, list) or len(commit_ids) > 20 or len(set(map(str, commit_ids))) != len(commit_ids):
+            raise ValueError('Invalid commit selection')
+        if any(not isinstance(item, str) or not re.fullmatch(r'[a-f0-9]{40,64}', item) for item in commit_ids):
+            raise ValueError('Invalid commit selection')
+        db = connect(self.path)
+        try:
+            if commit_ids:
+                start, end = bounds(task['day'], self.zone)
+                known = {row[0] for row in db.execute(
+                    'SELECT id FROM git_commits WHERE ts>=? AND ts<? AND id IN (' +
+                    ','.join('?' for _ in commit_ids) + ')', [start, end, *commit_ids])}
+                if known != set(commit_ids):
+                    raise ValueError('Unknown commit')
+            with db:
+                db.execute('''INSERT INTO task_reviews VALUES (?,?,?,?,?,?,?)
+                              ON CONFLICT(task_id) DO UPDATE SET status=excluded.status,
+                              outcome=excluded.outcome,learnings=excluded.learnings,
+                              next_steps=excluded.next_steps,verification=excluded.verification,
+                              updated_at=excluded.updated_at''',
+                           (task_id, status, outcome.strip(), learnings.strip(), next_steps.strip(),
+                            verification.strip(), self.clock()))
+                db.execute('DELETE FROM task_git WHERE task_id=?', (task_id,))
+                db.executemany('INSERT INTO task_git VALUES (?,?)', [(task_id, item) for item in commit_ids])
+            return {'task_id': task_id, 'status': status, 'commit_ids': commit_ids}
         finally:
             db.close()
 
@@ -248,6 +301,8 @@ class TaskService:
                 db.close()
 
     def _loop(self):
+        if self.runner is None:
+            return
         next_auto = 0
         while not self.stop.wait(0.5):
             if time.monotonic() >= next_auto:

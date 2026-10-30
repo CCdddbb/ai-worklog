@@ -1,0 +1,6 @@
+#!/bin/sh
+# Portable local launcher. No daemon, global Pi configuration or project hooks.
+set -eu
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+exec python3 "$ROOT/app.py" review --db "$ROOT/data/review.sqlite3" --pi-dir "$HOME/.pi/agent/sessions" "$@"

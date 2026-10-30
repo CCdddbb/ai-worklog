@@ -1,6 +1,6 @@
 [project]
 name = "ai-worklog-local"
-version = "0.2.0"
+version = "0.4.0"
 description = "Local AI activity dashboard with opt-in, evidence-grounded Pi task summaries"
 requires-python = ">=3.9"
 dependencies = []
