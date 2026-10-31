@@ -14,8 +14,16 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .core import bounds
-from .evidence import activity_digest, redact, snapshot, source_scope
-from .llm import SummaryError, validate_result
+from .evidence import (
+    EvidenceUnavailable,
+    activity_digest,
+    redact,
+    require_evidence,
+    snapshot,
+    source_scope,
+    summary_quality,
+)
+from .llm import SummaryError, validate_business_result, validate_result
 from .store import connect, salt
 
 LOGGER = logging.getLogger(__name__)
@@ -156,6 +164,7 @@ class TaskService:
             if mode == 'final' and task['end_ts'] is None:
                 task['end_ts'] = min(now, bounds(task['day'], self.zone)[1])
             data = snapshot(task, self._rows(task), self.roots, self.key, self.allow_excerpts)
+            require_evidence(data)
             encoded = json.dumps(data, ensure_ascii=False, sort_keys=True)
             fingerprint = hashlib.sha256((encoded + self.runner.provider + self.runner.model).encode()).hexdigest()
             db = connect(self.path)
@@ -203,6 +212,10 @@ class TaskService:
                     'SELECT commit_id FROM task_git WHERE task_id=?', (task['id'],))]
                 job = db.execute('SELECT id,mode,status,error,provider,model,created_at,finished_at,output_json,usage_json '
                                  'FROM summaries WHERE task_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1', (task['id'],)).fetchone()
+                saved = db.execute("SELECT output_json,input_json FROM summaries WHERE task_id=? AND status='success' "
+                    'ORDER BY created_at DESC,rowid DESC LIMIT 1', (task['id'],)).fetchone()
+                task['saved_summary'] = json.loads(saved['output_json']) if saved else None
+                task['saved_summary_quality'] = summary_quality(json.loads(saved['input_json']), task['saved_summary']) if saved else None
                 task['summary'] = dict(job) if job else None
                 if job:
                     task['summary']['result'] = json.loads(task['summary'].pop('output_json') or 'null')
@@ -256,8 +269,78 @@ class TaskService:
         finally:
             db.close()
 
+    def configure_summary(self, allow_excerpts, backend=None):
+        if type(allow_excerpts) is not bool:
+            raise ValueError('Explicit excerpt consent required')
+        if allow_excerpts and not self.roots:
+            raise ValueError('No configured sources for excerpts')
+        if backend not in (None, 'pi', 'codebuddy'):
+            raise ValueError('Unsupported summary backend')
+        with self.guard:
+            db = connect(self.path)
+            try:
+                if self.runner is not None and db.execute("SELECT 1 FROM summaries WHERE status IN ('queued','running') LIMIT 1").fetchone():
+                    raise ValueError('Wait for pending summaries before changing model settings')
+            finally:
+                db.close()
+            current = 'codebuddy' if getattr(self.runner, 'provider', None) == 'codebuddy' else 'pi'
+            if self.runner is None or (backend is not None and backend != current):
+                from .llm import create_runner
+                self.runner = create_runner('codebuddy') if backend == 'codebuddy' else create_runner()
+            self.allow_excerpts = allow_excerpts
+        return {'llm_enabled': True, 'allow_excerpts': self.allow_excerpts,
+                'provider': self.runner.provider, 'model': self.runner.model}
+
+    def rename_session(self, session, name):
+        if not isinstance(session, str) or not re.fullmatch(r'[a-f0-9]{16}', session):
+            raise ValueError('Invalid session')
+        if not isinstance(name, str) or not 1 <= len(name.strip()) <= 80:
+            raise ValueError('Name must contain 1 to 80 characters')
+        db = connect(self.path)
+        try:
+            if not db.execute('SELECT 1 FROM events WHERE session=? LIMIT 1', (session,)).fetchone():
+                raise ValueError('Unknown session')
+            with db:
+                db.execute('INSERT INTO session_names VALUES (?,?,?) ON CONFLICT(session) '
+                           'DO UPDATE SET name=excluded.name,origin=excluded.origin',
+                           (session, redact(name.strip(), 80), 'manual'))
+            return {'renamed': True}
+        finally:
+            db.close()
+
+    def name_sessions(self, day):
+        # Explicit local-only consent: read bounded user titles, store only compact display names.
+        from .adapters import collect
+        from .presentation import topic_name
+        start, end = bounds(day, self.zone)
+        if not self.roots:
+            raise ValueError('No configured sources for topic extraction')
+        db = connect(self.path)
+        try:
+            known = {row[0] for row in db.execute(
+                'SELECT DISTINCT session FROM events WHERE ts>=? AND ts<?', (start, end))}
+            titles = {}
+            coverage = {}
+            for source, root in self.roots.items():
+                events, stats = collect(root, source, self.key, titles=True, max_files=20)
+                coverage[source] = stats
+                for event in sorted(events, key=lambda item: item['ts']):
+                    if event['session'] in known and start <= event['ts'] < end and event['title']:
+                        titles.setdefault(event['session'], []).append(event['title'])
+            changed = 0
+            with db:
+                for session, candidates in titles.items():
+                    name = topic_name(candidates)
+                    if name:
+                        changed += db.execute('INSERT INTO session_names VALUES (?,?,?) '
+                            "ON CONFLICT(session) DO UPDATE SET name=excluded.name WHERE session_names.origin='excerpt'",
+                            (session, name, 'excerpt')).rowcount
+            return {'renamed': changed, 'coverage': coverage}
+        finally:
+            db.close()
+
     def auto_tick(self):
-        if not self.auto:
+        if not self.auto or not self.allow_excerpts:
             return
         with self.guard:
             now = self.clock()
@@ -274,9 +357,13 @@ class TaskService:
                     latest_end = db.execute("SELECT MAX(end_ts) FROM tasks WHERE day=? AND status='completed' AND sessions LIKE ?",
                                             (day, '%' + session + '%')).fetchone()[0]
                     since = max(start, self.started, (latest_end or 0) + 0.001)
-                    has_new = db.execute('SELECT 1 FROM events WHERE session=? AND ts>? AND ts<=? LIMIT 1', (session, since, now)).fetchone()
+                    has_new = db.execute('SELECT source,ts,title FROM events WHERE session=? AND ts>? AND ts<=? ORDER BY ts LIMIT 1', (session, since, now)).fetchone()
                     if has_new:
-                        task = self.create('自动任务 · 会话' + session[:8], [session], day, internal_start=since)
+                        from .presentation import topic_name
+                        named = db.execute('SELECT name FROM session_names WHERE session=?', (session,)).fetchone()
+                        local_time = datetime.fromtimestamp(has_new['ts'], ZoneInfo(self.zone)).strftime('%H:%M')
+                        name = named['name'] if named else topic_name([has_new['title']]) or f'{has_new["source"].capitalize()} · {local_time} 的协作'
+                        task = self.create('自动记录 · ' + name, [session], day, internal_start=since)
                         tasks.append(task)
                 for task in tasks:
                     rows = self._rows(task)
@@ -301,10 +388,10 @@ class TaskService:
                 db.close()
 
     def _loop(self):
-        if self.runner is None:
-            return
         next_auto = 0
         while not self.stop.wait(0.5):
+            if self.runner is None:
+                continue
             if time.monotonic() >= next_auto:
                 next_auto = time.monotonic() + 15
                 try:
@@ -340,13 +427,21 @@ class TaskService:
                     or data['coverage']['allow_excerpts'] != self.allow_excerpts
                     or data.get('source_scope') != source_scope(self.roots, self.key)):
                 raise SummaryError('configuration_changed')
+            if data.get('evidence_version') != 2:
+                raise SummaryError('configuration_changed')
+            require_evidence(data)
             result, cost = self.runner(data, job['mode'], self.stop)
             result = validate_result(json.dumps(result, ensure_ascii=False), {e['id'] for e in data['evidence']})
+            validate_business_result(result, data)
+        except EvidenceUnavailable:
+            error = 'insufficient_evidence'
         except SummaryError as failure:
             error = str(failure) if str(failure) in ['cancelled', 'timeout', 'pi_failed', 'output_limit',
                 'diagnostic_limit', 'input_limit', 'invalid_output', 'invalid_json', 'invalid_schema',
                 'invalid_text', 'invalid_citation', 'invalid_pi_stream', 'tools_forbidden',
-                'incomplete_response', 'configuration_changed'] else 'summary_failed'
+                'incomplete_response', 'configuration_changed', 'codebuddy_failed',
+                'invalid_codebuddy_stream', 'business_summary_required', 'non_content_citation',
+                'missing_outcome', 'missing_verification'] else 'summary_failed'
         except (OSError, ValueError, TypeError, KeyError, RuntimeError, sqlite3.Error):
             error = 'summary_failed'
         db = connect(self.path)
@@ -355,5 +450,14 @@ class TaskService:
                 db.execute('UPDATE summaries SET status=?,output_json=?,usage_json=?,error=?,finished_at=? WHERE id=?',
                            ('error' if error else 'success', json.dumps(result, ensure_ascii=False) if result else None,
                             json.dumps(cost) if cost else None, error, self.clock(), job['id']))
+                if not error and data['coverage'].get('excerpts_available', 0):
+                    sessions = {item['session'] for item in data['evidence']}
+                    if len(sessions) == 1:
+                        from .presentation import topic_name
+                        name = topic_name([result['work_items'][0]['title']] if result.get('work_items') else [result['overview']['text']])
+                        if name:
+                            db.execute('INSERT INTO session_names VALUES (?,?,?) ON CONFLICT(session) '
+                                "DO UPDATE SET name=excluded.name,origin=excluded.origin WHERE session_names.origin!='manual'",
+                                (next(iter(sessions)), name, 'summary'))
         finally:
             db.close()

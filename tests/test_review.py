@@ -8,8 +8,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from business_fixture import business_result
+
 from worklog.adapters import prefix_timestamp
 from worklog.cli import main
+from worklog.evidence import EvidenceUnavailable
 from worklog.llm import SummaryError
 from worklog.review import (
     ReviewError,
@@ -35,8 +38,7 @@ class Runner:
         self.calls.append(data)
         if len(self.calls) == self.fail_at:
             raise SummaryError('pi_failed')
-        item = {'text': '调整了终端配置，结果仍待核验。', 'evidence_ids': [data['evidence'][0]['id']]}
-        return {'overview': item, 'work': [item], 'results': [], 'blockers': [], 'next_steps': []}, {'tokens': 10}
+        return business_result(data, '调整了终端配置，结果仍待核验。'), {'tokens': 10}
 
 
 class ReviewTests(unittest.TestCase):
@@ -124,7 +126,7 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(len(self.runner.calls), 1)
         self.assertEqual(self.count('review_seen'), 4)
         self.assertEqual(self.count('reviews'), 1)
-        self.assertIn('工作条目', ''.join(self.output))
+        self.assertIn('问题/目标', ''.join(self.output))
 
     def test_late_arrival_same_timestamp_and_cross_day_are_not_lost(self):
         self.init()
@@ -147,7 +149,7 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(self.count('review_seen'), 0)
         self.assertEqual(self.count('reviews'), 0)
         self.assertEqual(self.count('review_cache'), 1)
-        self.assertIn('* 01 工作条目', ''.join(self.output))  # Already streamed before the second call failed.
+        self.assertIn('处理措施', ''.join(self.output))  # Already streamed before the second call failed.
         self.runner.fail_at = None
         self.assertEqual(self.run_review()['events'], 30)
         self.assertEqual(len(self.runner.calls), 3)
@@ -177,11 +179,15 @@ class ReviewTests(unittest.TestCase):
     def test_metadata_only_can_revoke_persisted_excerpt_consent(self):
         self.init()
         self.log()
-        self.run_review(allow_excerpts=False)
-        self.assertTrue(all(not e['text'] for e in self.runner.calls[0]['evidence']))
+        with self.assertRaises(EvidenceUnavailable):
+            self.run_review(allow_excerpts=False)
+        self.assertEqual(self.runner.calls, [])
+        self.assertEqual(self.count('review_seen'), 0)
         self.log(offset=30, name='second')
-        self.run_review()
-        self.assertTrue(all(not e['text'] for e in self.runner.calls[1]['evidence']))
+        with self.assertRaises(EvidenceUnavailable):
+            self.run_review()
+        self.assertEqual(self.runner.calls, [])
+        self.assertEqual(self.count('review_seen'), 0)
 
     def test_coverage_gap_is_blocked_unless_explicitly_accepted(self):
         self.init()
@@ -324,7 +330,7 @@ class ReviewTests(unittest.TestCase):
                         'assert "retry" in sys.argv[-1]\n'
                         'data = json.load(sys.stdin)\n'
                         'item = {"text": "合成CLI任务，尚待核验", "evidence_ids": [data["evidence"][0]["id"]]}\n'
-                        'result = {"overview": item, "work": [item], "results": [], "blockers": [], "next_steps": []}\n'
+                        'result = {"schema_version": 2, "overview": item, "work_items": [{"title": "合成CLI配置任务", "problem": item, "actions": [item], "outcome": None, "verification": None, "remaining": [], "status": "in_progress"}]}\n'
                         'message = {"role": "assistant", "stopReason": "stop", "content": '
                         '[{"type": "text", "text": json.dumps(result)}], "usage": {"input": 1}}\n'
                         'print(json.dumps({"type": "message_end", "message": message}))\n'

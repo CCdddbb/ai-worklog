@@ -101,6 +101,40 @@ async function main() {
 	assert.match(await page.locator("#task-focus").textContent(), /待整理会话/);
 	assert.equal(await page.locator("#tokens").textContent(), "4,200");
 	assert.match(await page.locator("#status").textContent(), /演示模式/);
+	assert.equal(await page.locator("#hourly-chart li").count(), 24);
+	assert.match(
+		await page.locator("#summary-content").textContent(),
+		/暂无已保存的总结/,
+	);
+	page.once("dialog", (dialog) => dialog.accept("认证回调排查"));
+	await page
+		.locator(".focus-row")
+		.first()
+		.getByRole("button", { name: "改名", exact: true })
+		.click();
+	await page.waitForFunction(() =>
+		document.querySelector("#task-focus").textContent.includes("认证回调排查"),
+	);
+	await page.locator("#refresh").click();
+	await page.waitForFunction(
+		() => !document.querySelector("#refresh").disabled,
+	);
+	assert.match(await page.locator("#task-focus").textContent(), /认证回调排查/);
+	if (!summaryMode) {
+		await page
+			.locator(".focus-row")
+			.first()
+			.getByRole("button", { name: "生成总结", exact: true })
+			.click();
+		assert.equal(await page.locator("#summary-help").getAttribute("open"), "");
+		assert.equal(await page.locator("#summary-excerpts").isChecked(), false);
+		assert.match(
+			await page.locator("#summary-config").textContent(),
+			/尚未启用模型/,
+		);
+		await page.locator("#summary-help summary").click();
+	}
+	await page.evaluate(() => window.scrollTo(0, 0));
 	await page.screenshot({
 		path: path.join(screenshotDir, "dashboard-demo.png"),
 		fullPage: true,
@@ -113,7 +147,31 @@ async function main() {
 	await page.locator("#download").click();
 	const download = await pendingDownload;
 	assert.equal(download.suggestedFilename(), "ai-worklog-day-2026-10-28.md");
-	if (summaryMode) {
+	if (summaryMode && process.env.WORKLOG_QUICK_SUMMARY === "1") {
+		await page.locator("[data-view=overview]").click();
+		page.once("dialog", (dialog) => dialog.accept());
+		await page
+			.locator(".focus-row")
+			.first()
+			.getByRole("button", { name: "生成总结", exact: true })
+			.click();
+		await page.waitForFunction(() =>
+			document
+				.querySelector("#summary-content")
+				.textContent.includes("虚构测试：梳理了活动线索"),
+		);
+		assert.equal(await page.locator("#overview-tasks").textContent(), "1");
+		assert.equal(await page.locator("#overview-untriaged").textContent(), "1");
+		assert.match(
+			await page.locator("#summary-content").textContent(),
+			/AI 草稿/,
+		);
+		await page.evaluate(() => window.scrollTo(0, 0));
+		await page.screenshot({
+			path: path.join(screenshotDir, "dashboard-summary.png"),
+			fullPage: true,
+		});
+	} else if (summaryMode) {
 		await page.locator("[data-view=tasks]").click();
 		await page.waitForFunction(
 			() => !document.querySelector("#task-create").disabled,
@@ -164,6 +222,18 @@ async function main() {
 		assert.equal(await page.locator("#overview-tasks").textContent(), "1");
 		assert.equal(await page.locator("#overview-confirmed").textContent(), "1");
 		assert.equal(await page.locator("#overview-untriaged").textContent(), "0");
+		assert.match(
+			await page.locator("#summary-content").textContent(),
+			/虚构测试：梳理了活动线索/,
+		);
+		assert.match(
+			await page.locator("#summary-content").textContent(),
+			/人工已确认/,
+		);
+		await page.screenshot({
+			path: path.join(screenshotDir, "dashboard-summary.png"),
+			fullPage: true,
+		});
 		await page.locator("[data-view=report]").click();
 		await page.waitForFunction(() =>
 			document

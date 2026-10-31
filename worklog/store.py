@@ -66,6 +66,8 @@ def connect(path):
     db.execute('''CREATE TABLE IF NOT EXISTS reviews (
         id TEXT PRIMARY KEY, scope TEXT, start_ts REAL, end_ts REAL,
         created_at REAL, output TEXT, coverage_json TEXT, provider TEXT, model TEXT)''')
+    db.execute('''CREATE TABLE IF NOT EXISTS session_names (
+        session TEXT PRIMARY KEY, name TEXT NOT NULL, origin TEXT NOT NULL)''')
     return db
 
 
@@ -127,7 +129,11 @@ def report_data(path, day, zone):
                                             (start - TIMEOUT, end + TIMEOUT))]
         coverage = {r['source']: dict(json.loads(r['coverage']), imported_at=r['imported_at'])
                     for r in db.execute('SELECT * FROM imports')}
-        data = summarize(events, day, zone, coverage)
+        from .presentation import decorate_sessions
+        data = decorate_sessions(db, summarize(events, day, zone, coverage))
+        data['incremental_reviews'] = [dict(row) for row in db.execute(
+            'SELECT output,created_at,provider,model FROM reviews WHERE created_at>=? AND created_at<? '
+            'ORDER BY created_at DESC LIMIT 10', (start, end))]
         drafts = []
         for task in db.execute('SELECT * FROM tasks WHERE day=? ORDER BY created_at', (day,)):
             job = db.execute("SELECT * FROM summaries WHERE task_id=? AND status='success' ORDER BY created_at DESC,rowid DESC LIMIT 1", (task['id'],)).fetchone()
@@ -136,6 +142,8 @@ def report_data(path, day, zone):
                 drafts.append({'task_id': task['id'], 'title': task['title'], 'mode': job['mode'],
                                'status': task['status'], 'provider': job['provider'], 'model': job['model'],
                                'coverage': captured['coverage'], 'result': json.loads(job['output_json'])})
+                from .evidence import summary_quality
+                drafts[-1]['quality'] = summary_quality(captured, drafts[-1]['result'])
         data['task_summaries'] = drafts
         reviews = []
         for row in db.execute('''SELECT t.id, t.title, r.status, r.outcome, r.learnings,
@@ -157,8 +165,14 @@ def report_data(path, day, zone):
 
 
 def markdown(data):
+    from .reporting import draft_lines
     lines = [f'# AI 工作日报 · {data["date"]}', '', f'时区：{data["timezone"]}', '',
-        '## 活动事实', '', f'- 观察到 {len(data["sessions"])} 个会话，{data["request_count"]} 条模型回复记录。',
+             '## LLM任务总结（待人工审核）', '']
+    if not data.get('task_summaries'):
+        lines += ['尚无有效工作总结。请授权正文摘录并生成任务总结；下面的活动统计不能替代工作结论。', '']
+    for draft in data.get('task_summaries', []):
+        lines += draft_lines(draft)
+    lines += ['## 活动事实（附录统计，不是工作成果）', '', f'- 观察到 {len(data["sessions"])} 个会话，{data["request_count"]} 条模型回复记录。',
         f'- 活跃区间估计 {data["estimated_active_seconds"] / 60:.1f} 分钟（并行去重，非真实编码工时）。',
         f'- 记录 Token 合计 {data["tokens"]:,}，运行异常/取消记录 {data["error_count"]} 条。', '',
         '## 模型用量', '', '| Provider / Model | 回复记录 | 输入(非缓存) | 缓存读 | 缓存写 | 输出 |',
@@ -168,7 +182,7 @@ def markdown(data):
                      f'{m["cache_read"]} | {m["cache_write"]} | {m["output"]} |')
     lines += ['', '## 会话线索（不是成果确认）', '']
     for session in data['sessions']:
-        lines.append(f'- [{session["session"]}] 匿名项目 {session["project"]} · '
+        lines.append(f'- {safe_markdown(session.get("display_name", session["session"]))} · 匿名项目 {session["project"]} · '
                      f'{session["source"]} · {session["tokens"]:,} Token · 异常 {session["errors"]}')
         for title in session['titles']:
             # Render untrusted titles as quoted text, not links/HTML.
@@ -176,20 +190,6 @@ def markdown(data):
             lines.append('  - 讨论标题：' + safe)
     if not data['sessions']:
         lines.append('- 本日期没有已导入的活动，不能推断当天没有工作。')
-    if data.get('task_summaries'):
-        lines += ['', '## LLM任务总结（待人工审核）', '']
-        for draft in data['task_summaries']:
-            def safe(value):
-                return str(value).replace('<', '＜').replace('>', '＞').replace('[', '［').replace(']', '］').replace('`', '｀').replace('\n', ' ')
-            lines += ['### ' + safe(draft['title']), '',
-                      '- 类型：' + ('用户手动结束后的总结' if draft['mode'] == 'final' else '自动/手动阶段总结，非任务完成证明'),
-                      f'- 模型：{draft["provider"]}/{draft["model"]}；证据采样：{draft["coverage"]["selected_events"]}/{draft["coverage"]["total_activity_events"]}。']
-            result = draft['result']
-            for name, items in [('概述', [result['overview']]), ('做过的工作', result['work']),
-                                ('结果线索（未验收）', result['results']), ('阻塞', result['blockers']), ('下一步建议', result['next_steps'])]:
-                for item in items:
-                    lines.append(f'- {name}：{safe(item["text"])} （证据：{", ".join(item["evidence_ids"])}）')
-            lines.append('')
     lines += ['', '## 人工审阅的任务', '']
     if data.get('task_reviews'):
         for review in data['task_reviews']:
@@ -229,8 +229,8 @@ def safe_markdown(value):
 
 
 def period_markdown(path, day, zone, period):
-    from datetime import date, timedelta
     import calendar
+    from datetime import date, timedelta
     selected = date.fromisoformat(day)
     if period == 'week':
         first = selected - timedelta(days=selected.weekday())
@@ -264,6 +264,12 @@ def period_markdown(path, day, zone, period):
             lines.append('')
     if not count:
         lines.append('- 本周期没有人工审阅的任务。')
+    from .reporting import draft_lines
+    lines += ['', '## 工作总结草稿（待人工审核）', '']
+    for data in days:
+        for draft in data['task_summaries']:
+            lines.append('日期：' + data['date'])
+            lines.extend(draft_lines(draft))
     lines += ['', '## 活动统计（仅供参考）', '',
               f'- 已导入会话活动 {sum(day["event_count"] for day in days)} 条，模型回复 {sum(day["request_count"] for day in days)} 条。',
               f'- 记录 Token {sum(day["tokens"] for day in days):,}；此数字不代表工作成果或实际费用。',

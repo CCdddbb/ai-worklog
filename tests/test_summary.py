@@ -9,6 +9,8 @@ import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
+from business_fixture import business_result
+
 from worklog.adapters import collect, event
 from worklog.cli import main
 from worklog.core import bounds
@@ -34,8 +36,7 @@ class FakeRunner:
         self.calls.append((data, mode))
         if self.fail:
             raise SummaryError('pi_failed')
-        item = {'text': '整理了配置调整线索，成果仍需核验。', 'evidence_ids': [data['evidence'][0]['id']]}
-        return {'overview': item, 'work': [item], 'results': [], 'blockers': [], 'next_steps': []}, {'tokens': 12}
+        return business_result(data), {'tokens': 12}
 
 
 class TaskTests(unittest.TestCase):

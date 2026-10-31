@@ -87,8 +87,8 @@ def serve(args, day):
         from .tasks import TaskService
         runner = None
         if args.enable_llm:
-            from .llm import PiRunner
-            runner = PiRunner(args.summary_provider, args.summary_model)
+            from .llm import create_runner
+            runner = create_runner(args.summary_provider, args.summary_model)
         roots = {name: value for name, value in [('pi', args.pi_dir), ('codex', args.codex_dir)] if value}
         service = TaskService(args.db, runner, roots, args.allow_excerpts, args.auto_summarize,
                               args.idle_minutes * 60, args.daily_summary_limit, args.timezone)
@@ -143,7 +143,7 @@ def main(argv=None):
             if name == 'serve':
                 sub.add_argument('--watch', action='store_true')
             sub.add_argument('--interval', type=int, default=30)
-            sub.add_argument('--enable-llm', action='store_true', help='Allow summary calls via isolated Pi CLI')
+            sub.add_argument('--enable-llm', action='store_true', help='Allow summary calls via isolated Pi or CodeBuddy CLI')
             sub.add_argument('--allow-excerpts', action='store_true', help='Opt in to redacted user/assistant excerpts sent to chosen model')
             sub.add_argument('--summary-provider')
             sub.add_argument('--summary-model')
@@ -207,6 +207,7 @@ def main(argv=None):
             with summary_write_lock(args.db), review_write_lock(args.db), db:
                 if args.summaries_only:
                     changed = db.execute('DELETE FROM summaries').rowcount
+                    changed += db.execute("DELETE FROM session_names WHERE origin='summary'").rowcount
                     changed += db.execute('DELETE FROM task_reviews').rowcount
                     changed += db.execute('DELETE FROM task_git').rowcount
                     db.execute('DELETE FROM tasks')
@@ -214,9 +215,11 @@ def main(argv=None):
                         changed += db.execute('DELETE FROM ' + table).rowcount
                 elif args.titles_only:
                     changed = db.execute("UPDATE events SET title='' WHERE title != ''").rowcount
+                    changed += db.execute("DELETE FROM session_names WHERE origin!='manual'").rowcount
                 else:
                     cutoff, _ = bounds(args.before, args.timezone)
                     changed = db.execute('DELETE FROM events WHERE ts < ?', (cutoff,)).rowcount
+                    db.execute('DELETE FROM session_names WHERE session NOT IN (SELECT DISTINCT session FROM events)')
                     changed += db.execute('DELETE FROM git_commits WHERE ts < ?', (cutoff,)).rowcount
                     db.execute('DELETE FROM task_git WHERE commit_id NOT IN (SELECT id FROM git_commits)')
                     db.execute('DELETE FROM reviews WHERE created_at < ?', (cutoff,))

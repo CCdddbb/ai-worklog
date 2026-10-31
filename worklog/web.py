@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .core import bounds
+from .evidence import EvidenceUnavailable
 from .store import markdown, period_markdown, report_data
 
 STATIC = Path(__file__).resolve().parents[1] / 'static'
@@ -49,7 +50,8 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
         def do_GET(self):
             url = urlsplit(self.path)
             assets = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'),
-                      '/tasks.js': ('tasks.js', 'text/javascript'), '/style.css': ('style.css', 'text/css')}
+                      '/tasks.js': ('tasks.js', 'text/javascript'), '/dashboard.js': ('dashboard.js', 'text/javascript'),
+                      '/style.css': ('style.css', 'text/css')}
             if not self.access(private=url.path not in assets):
                 return
             if url.path in assets:
@@ -92,7 +94,8 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
             if not self.access(mutation=True):
                 return
             path = urlsplit(self.path).path
-            if path not in ['/api/tasks', '/api/summarize', '/api/task-review']:
+            if path not in ['/api/tasks', '/api/summarize', '/api/task-review',
+                            '/api/summary-settings', '/api/session-names', '/api/session-rename']:
                 self.send(404, {'error': 'not_found'})
                 return
             if not task_service:
@@ -108,7 +111,19 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                 body = json.loads(self.rfile.read(length))
                 if not isinstance(body, dict):
                     raise TypeError('Invalid object')
-                if path == '/api/tasks':
+                if path == '/api/summary-settings':
+                    if set(body) - {'allow_excerpts', 'backend'} or 'allow_excerpts' not in body:
+                        raise ValueError('Invalid consent')
+                    self.send(200, task_service.configure_summary(body['allow_excerpts'], body.get('backend')))
+                elif path == '/api/session-names':
+                    if set(body) != {'date', 'consent'} or body['consent'] is not True:
+                        raise ValueError('Explicit consent required')
+                    self.send(200, task_service.name_sessions(body['date']))
+                elif path == '/api/session-rename':
+                    if set(body) != {'session', 'name'}:
+                        raise ValueError('Invalid name fields')
+                    self.send(200, task_service.rename_session(body['session'], body['name']))
+                elif path == '/api/tasks':
                     if set(body) - {'title', 'sessions', 'date', 'start_time'}:
                         raise ValueError('Unknown fields')
                     result = task_service.create(body.get('title'), body.get('sessions'),
@@ -123,8 +138,16 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                     if set(body) - {'task_id', 'mode', 'retry'} or type(body.get('retry', False)) is not bool:
                         raise ValueError('Unknown fields')
                     self.send(202, task_service.request(body.get('task_id'), body.get('mode', 'stage'), body.get('retry', False)))
+            except EvidenceUnavailable as error:
+                self.send(409, {'error': error.code, 'hint': str(error), 'coverage': error.coverage})
             except (ValueError, TypeError, OverflowError, RecursionError):
-                self.send(400, {'error': 'invalid_scope_or_limit', 'hint': '检查所选会话、起始时间、任务状态或每日任务上限。'})
+                hints = {
+                    '/api/summary-settings': '无法更新模型设置。请确认没有排队/运行中的总结，并检查 CodeBuddy CLI 登录或 Pi CLI 默认模型；摘录需要已配置来源。',
+                    '/api/session-rename': '名称需为 1–80 个字符，且会话必须已导入。',
+                    '/api/session-names': '请确认本地主题提取授权、日期和来源目录。',
+                }
+                self.send(400, {'error': 'invalid_scope_or_limit', 'hint': hints.get(path,
+                    '检查所选会话、起始时间、任务状态或每日任务上限。')})
             except (OSError, sqlite3.Error):
                 self.send(503, {'error': 'local_data_unavailable'})
 

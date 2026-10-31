@@ -11,21 +11,45 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .adapters import collect
-from .evidence import activity_digest, redact, snapshot, source_scope
-from .llm import PiRunner, SummaryError, validate_result
+from .evidence import (
+    EvidenceUnavailable,
+    activity_digest,
+    redact,
+    require_evidence,
+    snapshot,
+    source_scope,
+)
+from .llm import (
+    SYSTEM,
+    PiRunner,
+    SummaryError,
+    validate_business_result,
+    validate_result,
+)
+from .reporting import business_lines
 from .store import FIELDS, connect, salt
 
 GAPS = ('omitted_files', 'oversized_files', 'oversized_lines', 'truncated_files',
         'partial_lines', 'malformed_lines', 'unreadable_files', 'invalid_timestamps')
 
 
+REVIEW_INSTRUCTIONS = ('\n这是跨会话增量工作回顾。work_items应按首次出现的时间列出不同任务，'
+                       '同一任务的多轮尝试合并，不把重复的retry当作新成果。'
+                       '将用户要求、助手报告、未验证结果区分清楚；不要把全部任务挤成一句笼统总结。')
+
+
 class ReviewRunner(PiRunner):
     def command(self):
         command = super().command()
-        command[-1] += ('\n这是跨会话增量工作回顾。work数组应按首次出现的时间列出不同任务，'
-                        '同一任务的多轮尝试合并，不把重复的retry当作新成果。'
-                        '将用户要求、助手报告、未验证结果区分清楚；不要把全部任务挤成一句笼统总结。')
+        command[-1] += REVIEW_INSTRUCTIONS
         return command
+
+
+def default_review_runner(provider, model):
+    if provider == 'codebuddy':
+        from .codebuddy import CodeBuddyRunner
+        return CodeBuddyRunner(model=model, system_prompt=SYSTEM + REVIEW_INSTRUCTIONS)
+    return ReviewRunner(provider, model)
 
 
 class ReviewError(ValueError):
@@ -89,7 +113,7 @@ def write_new(path, text):
         os.fsync(stream.fileno())
 
 
-def review(args, emit, progress, runner_factory=ReviewRunner, clock=time.time):
+def review(args, emit, progress, runner_factory=default_review_runner, clock=time.time):
     roots = {name: path for name, path in [('pi', args.pi_dir), ('codex', args.codex_dir)] if path}
     if not 1 <= args.batch_limit <= 12:
         raise ReviewError('--batch-limit 需要在 1 到 12 之间。')
@@ -185,16 +209,19 @@ def review(args, emit, progress, runner_factory=ReviewRunner, clock=time.time):
                     emit(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
                 return {'status': 'preview', 'events': len(unseen)}
 
+            materials = [snapshot({'title': f'增量工作批次 {index}'}, group, roots, key, bool(state['excerpts']))
+                         for index, group in enumerate(selected, 1)]
+            for material in materials:
+                require_evidence(material)
             runner = runner_factory(args.summary_provider, args.summary_model)
             header += [f'模型：{safe(runner.provider)}/{safe(runner.model)}；摘录授权：'
                        + ('开启' if state['excerpts'] else '关闭（只能生成有限的活动概括）') + '。', '']
             output = '\n'.join(header) + '\n'
             emit(output)
             consumed = []
-            number = 0
             for index, group in enumerate(selected, 1):
-                data = snapshot({'title': f'增量工作批次 {index}'}, group, roots, key, bool(state['excerpts']))
-                fingerprint = hashlib.sha256(json.dumps([1, data, runner.provider, runner.model],
+                data = materials[index - 1]
+                fingerprint = hashlib.sha256(json.dumps([2, data, runner.provider, runner.model],
                                              sort_keys=True, ensure_ascii=False).encode()).hexdigest()
                 cached = db.execute('SELECT * FROM review_cache WHERE fingerprint=?', (fingerprint,)).fetchone()
                 progress(f'[{index}/{len(selected)}] ' + ('复用已验证的结果' if cached else '正在生成并验证回顾') + '\n')
@@ -204,18 +231,14 @@ def review(args, emit, progress, runner_factory=ReviewRunner, clock=time.time):
                 else:
                     result, usage = runner(data, 'stage', threading.Event())
                     result = validate_result(json.dumps(result, ensure_ascii=False), ids)
+                    validate_business_result(result, data)
                     with db:
                         db.execute('INSERT OR REPLACE INTO review_cache VALUES (?,?,?)',
                                    (fingerprint, json.dumps(result, ensure_ascii=False), json.dumps(usage)))
-                text = (f'## 批次 {index:02d} · {safe(result["overview"]["text"])}\n'
+                validate_business_result(result, data)
+                text = (f'## 工作概述 · {safe(result["overview"]["text"])}\n'
                         f'活动：{stamp(group[0]["ts"], args.timezone)} → {stamp(group[-1]["ts"], args.timezone)}\n')
-                for item in result['work']:
-                    number += 1
-                    text += f'* {number:02d} 工作条目：{safe(item["text"])} （证据：{", ".join(item["evidence_ids"])}）\n'
-                for name, items in [('结果线索（未验收）', result['results']),
-                                    ('阻塞', result['blockers']), ('后续建议', result['next_steps'])]:
-                    for item in items:
-                        text += f'- {name}：{safe(item["text"])} （证据：{", ".join(item["evidence_ids"])}）\n'
+                text += '\n'.join(business_lines(result)) + '\n'
                 text += '\n'
                 emit(text)  # Flush only redacted, schema/citation-validated results, never raw model tokens.
                 output += text
@@ -257,7 +280,7 @@ def command(args):
     try:
         review(args, emit, progress)
         return 0
-    except ReviewError as error:
+    except (ReviewError, EvidenceUnavailable) as error:
         progress(str(error) + '\n')
         return 1
     except SummaryError:

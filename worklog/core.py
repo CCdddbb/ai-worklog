@@ -155,6 +155,12 @@ def summarize(events, day, zone, coverage=None):
                 m['recorded_cost'] += e['cost']
                 m['cost_records'] += 1
             group['models'].add(e['provider'] + '/' + e['model'])
+    hourly = [{'hour': hour, 'events': 0, 'requests': 0, 'tokens': 0} for hour in range(24)]
+    for e in selected:
+        bucket = hourly[datetime.fromtimestamp(e['ts'], ZoneInfo(zone)).hour]
+        bucket['events'] += 1
+        bucket['requests'] += e['kind'] == 'assistant'
+        bucket['tokens'] += e['tokens']
     for group in groups.values():
         group['models'] = sorted(group['models'])
         group['titles'] = group['titles'][:10]
@@ -163,7 +169,7 @@ def summarize(events, day, zone, coverage=None):
         'request_count': sum(e['kind'] == 'assistant' for e in selected),
         'error_count': sum(e['status'] in ['error', 'aborted'] for e in selected),
         'tokens': sum(e['tokens'] for e in selected), 'estimated_active_seconds': union_seconds(intervals),
-        'coverage': coverage or {}, 'limitations': [
+        'hourly': hourly, 'coverage': coverage or {}, 'limitations': [
             '活跃时间为5分钟阈值下的活动标记区间并集，不是实际编码工时。',
             '正常结束和工具成功不等于任务完成；成果需要人工确认。',
             '成本仅为源日志记录值，不是实际账单；零值不代表免费。',

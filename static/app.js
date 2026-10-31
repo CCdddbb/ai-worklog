@@ -26,12 +26,14 @@ async function api(path, options = {}) {
 		cache: "no-store",
 		credentials: "omit",
 	});
-	if (!response.ok)
+	if (!response.ok) {
+		const error = await response.json().catch(() => ({}));
 		throw new Error(
 			response.status === 401
 				? "访问令牌缺失或失效，请重新打开启动命令打印的完整链接。"
-				: "读取失败，请检查服务状态或日期。",
+				: error.hint || "读取失败，请检查服务状态或日期。",
 		);
+	}
 	return response;
 }
 function url(path) {
@@ -64,9 +66,7 @@ function render(value) {
 		const row = element("div", undefined, "timeline-row");
 		row.append(element("span", clock(s.first), "clock"));
 		const block = element("div", undefined, "block");
-		block.append(
-			element("strong", s.titles[0] || `会话 ${s.session.slice(0, 8)}`),
-		);
+		block.append(element("strong", sessionName(s)));
 		block.append(
 			element(
 				"div",
@@ -77,8 +77,8 @@ function render(value) {
 		row.append(block);
 		$("timeline").append(row);
 		const activity = element("div", undefined, "activity-row");
-		const identity = element("div", `会话 ${s.session.slice(0, 8)}`);
-		identity.append(element("small", `匿名项目 ${s.project}`));
+		const identity = element("div", sessionName(s));
+		identity.append(sessionDetails(s));
 		const summary = element(
 			"div",
 			s.titles.join(" / ") ||
@@ -189,6 +189,7 @@ $("download").addEventListener("click", async () => {
 	}
 });
 async function showView(button) {
+	window.scrollTo(0, 0);
 	for (const other of document.querySelectorAll("nav button")) {
 		other.classList.toggle("active", other === button);
 		if (other === button) other.setAttribute("aria-current", "page");
