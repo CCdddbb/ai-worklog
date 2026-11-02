@@ -56,7 +56,9 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
             assets = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'),
                       '/tasks.js': ('tasks.js', 'text/javascript'), '/dashboard.js': ('dashboard.js', 'text/javascript'),
                       '/weekly.js': ('weekly.js', 'text/javascript'), '/reports.js': ('reports.js', 'text/javascript'),
-                      '/style.css': ('style.css', 'text/css'), '/workbench.css': ('workbench.css', 'text/css')}
+                      '/style.css': ('style.css', 'text/css'), '/workbench.css': ('workbench.css', 'text/css'),
+                      '/tokens.css': ('tokens.css', 'text/css'),
+                      '/favicon.svg': ('favicon.svg', 'image/svg+xml')}
             if not self.access(private=url.path not in assets):
                 return
             if url.path in assets:
