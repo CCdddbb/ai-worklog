@@ -167,6 +167,7 @@ def main(argv=None):
         if name == 'report':
             sub.add_argument('--out', help='New Markdown file only')
             sub.add_argument('--period', choices=['day', 'week', 'month'], default='day')
+            sub.add_argument('--detail', choices=['brief', 'full'], default='brief', help='Brief delivery or full review report')
         if name == 'purge':
             choice = sub.add_mutually_exclusive_group(required=True)
             choice.add_argument('--before')
@@ -193,8 +194,8 @@ def main(argv=None):
     elif args.command == 'demo':
         print(json.dumps(demo(args, day), ensure_ascii=False))
     elif args.command == 'report':
-        text = (markdown(report_data(args.db, day, args.timezone)) if args.period == 'day'
-                else period_markdown(args.db, day, args.timezone, args.period))
+        text = (markdown(report_data(args.db, day, args.timezone), args.detail) if args.period == 'day'
+                else period_markdown(args.db, day, args.timezone, args.period, args.detail))
         if args.out:
             with Path(args.out).open('x', encoding='utf-8') as stream:
                 stream.write(text)
@@ -223,6 +224,8 @@ def main(argv=None):
                     changed += db.execute('DELETE FROM git_commits WHERE ts < ?', (cutoff,)).rowcount
                     db.execute('DELETE FROM task_git WHERE commit_id NOT IN (SELECT id FROM git_commits)')
                     db.execute('DELETE FROM reviews WHERE created_at < ?', (cutoff,))
+                    db.execute('DELETE FROM import_days WHERE day < ?', (args.before,))
+                    db.execute('DELETE FROM session_triage WHERE day < ?', (args.before,))
                     db.execute('DELETE FROM review_cache')
                     expired = [r[0] for r in db.execute('SELECT id FROM tasks WHERE start_ts<?', (cutoff,))]
                     for task_id in expired:

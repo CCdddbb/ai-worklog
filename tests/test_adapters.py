@@ -165,6 +165,18 @@ class AdapterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             connect(other)
 
+    def test_unchanged_owned_database_reads_do_not_commit_header_writes(self):
+        connect(self.db).close()
+        observer = sqlite3.connect(self.db)
+        try:
+            before = observer.execute('PRAGMA data_version').fetchone()[0]
+            for _ in range(5):
+                connect(self.db).close()
+            after = observer.execute('PRAGMA data_version').fetchone()[0]
+            self.assertEqual(before, after)
+        finally:
+            observer.close()
+
     def test_missing_identity_key_does_not_silently_duplicate_existing_data(self):
         self.write([pi_header(), pi_message()])
         rows, stats = collect(self.source, 'pi', KEY)

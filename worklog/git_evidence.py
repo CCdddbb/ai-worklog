@@ -1,6 +1,6 @@
 """Explicit, read-only Git commit metadata import. No diffs or repository paths are stored."""
-import hmac
 import hashlib
+import hmac
 import json
 import re
 import subprocess
@@ -66,11 +66,13 @@ def import_repo(path, db_path, key, day, zone):
                               ON CONFLICT(id) DO UPDATE SET subject=excluded.subject,
                               files_changed=excluded.files_changed,additions=excluded.additions,
                               deletions=excluded.deletions''', rows)
-            coverage = {'source': 'git:' + project, 'date': day, 'selected': min(len(lines), 100),
+            coverage = {'source': 'git:' + project, 'date': day, 'timezone': zone, 'selected': min(len(lines), 100),
                         'more_commits': len(lines) > 100, 'imported_commits': len(rows)}
             db.execute('DELETE FROM imports WHERE source=?', (coverage['source'],))
             db.execute("INSERT INTO imports VALUES (?,datetime('now'),?)",
                        (coverage['source'], json.dumps(coverage)))
+            db.execute('INSERT OR REPLACE INTO import_days VALUES (?,?,?,?)',
+                       (coverage['source'], day, zone, json.dumps(coverage)))
     finally:
         db.close()
     return coverage

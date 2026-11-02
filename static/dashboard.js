@@ -18,7 +18,8 @@ function sessionDetails(session) {
 	return details;
 }
 function openSummarySettings() {
-	showView(document.querySelector('[data-view="overview"]'));
+	showView(document.querySelector('[data-view="overview"]'), { force: true });
+	$("summary-panel").open = true;
 	$("summary-help").open = true;
 	$("summary-panel").scrollIntoView({ block: "start" });
 }
@@ -56,25 +57,6 @@ function renderInsights(value) {
 	$("activity-caption").textContent = hourly.some((bucket) => bucket.events)
 		? `${value.sessions.length} 个会话 · ${number(value.request_count)} 条回复 · ${number(value.tokens)} Token。事件密度不代表工作时长。`
 		: "所选日期暂无已导入活动，不能据此判断没有工作。";
-	$("overview-models").replaceChildren();
-	const total = value.models.reduce((sum, model) => sum + model.tokens, 0);
-	for (const model of value.models) {
-		const row = element("div", undefined, "model");
-		const head = element("div", undefined, "model-head");
-		const percent = total ? (model.tokens / total) * 100 : 0;
-		head.append(
-			element("span", model.model),
-			element("span", `${number(model.tokens)} · ${percent.toFixed(1)}%`),
-		);
-		const bar = element("div", undefined, "bar");
-		const fill = element("span");
-		fill.style.width = `${percent}%`;
-		bar.append(fill);
-		row.append(head, bar, element("small", model.provider, "hint"));
-		$("overview-models").append(row);
-	}
-	if (!value.models.length)
-		$("overview-models").append(element("p", "暂无模型用量", "empty"));
 	$("summary-facts").textContent =
 		`本地统计：${value.sessions.length} 个会话，${number(value.request_count)} 条 AI 回复，${number(value.error_count)} 条异常/取消记录。不是 AI 业务总结或成果验收。`;
 }
@@ -88,7 +70,12 @@ function renderBusinessWork(result, target) {
 			blocked: "存在阻塞",
 			discussed: "仅讨论 / 方案",
 		};
-		section.append(element("span", statuses[group.status], "badge"));
+		section.append(
+			statusBadge(
+				statuses[group.status],
+				group.status === "blocked" ? "blocked" : "draft",
+			),
+		);
 		const fields = [
 			["问题 / 目标", [group.problem]],
 			["处理措施", group.actions],
@@ -142,8 +129,17 @@ function renderSummaryBoard(tasks, current) {
 		const result = task.saved_summary || task.summary?.result;
 		if (!result && !task.review?.outcome) continue;
 		count++;
-		const card = element("article", undefined, "summary-card");
-		const head = element("div", undefined, "section-head");
+		const archived = task.review && !task.review_focus?.updated_since_review;
+		const card = element(
+			archived ? "details" : "article",
+			undefined,
+			"summary-card",
+		);
+		const head = element(
+			archived ? "summary" : "div",
+			undefined,
+			"section-head",
+		);
 		head.append(
 			element("strong", task.title),
 			element(
@@ -153,7 +149,7 @@ function renderSummaryBoard(tasks, current) {
 					: task.saved_summary_quality?.needs_regeneration
 						? "需重新生成"
 						: "待审阅",
-				"badge",
+				`badge status-${task.review?.status === "confirmed" ? "confirmed" : "draft"}`,
 			),
 		);
 		card.append(head);
@@ -175,10 +171,16 @@ function renderSummaryBoard(tasks, current) {
 			card.append(history);
 		} else if (result) {
 			card.append(element("p", `AI 草稿：${result.overview.text}`));
-			renderBusinessWork(result, card);
+			card.append(
+				element(
+					"p",
+					`${result.work_items?.length || 0} 个工作项 · 过程和依据在审阅中查看。`,
+					"hint",
+				),
+			);
 		}
 		if (task.saved_summary_quality?.needs_regeneration) {
-			const regenerate = element("button", "重新生成工作总结");
+			const regenerate = element("button", "重新生成工作总结", "button-ai");
 			regenerate.type = "button";
 			regenerate.addEventListener("click", () =>
 				window.worklogTasks
@@ -193,14 +195,11 @@ function renderSummaryBoard(tasks, current) {
 			);
 			card.append(regenerate);
 		}
-		const button = element("button", "查看证据与审阅");
+		const button = element("button", "查看证据与审阅", "button-quiet");
 		button.type = "button";
-		button.addEventListener("click", () => {
-			showView(document.querySelector('[data-view="tasks"]'));
-			document
-				.getElementById(`task-${task.id}`)
-				?.scrollIntoView({ block: "start" });
-		});
+		button.addEventListener("click", () =>
+			window.worklogTasks.openReview(task),
+		);
 		card.append(button);
 		$("summary-content").append(card);
 	}
@@ -243,6 +242,7 @@ function renderSummaryBoard(tasks, current) {
 				"summary-empty",
 			),
 		);
+	$("summary-count").textContent = count ? `· ${count} 份记录` : "· 按需启用";
 	const counts = { confirmed: 0, in_progress: 0, blocked: 0, pending: 0 };
 	for (const task of tasks) counts[task.review?.status || "pending"]++;
 	$("task-progress").replaceChildren();

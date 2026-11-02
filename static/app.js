@@ -5,6 +5,7 @@ history.replaceState(null, "", location.pathname);
 let data = null;
 let zone = "Asia/Shanghai";
 let loading = false;
+let reloadRequested = false;
 const number = (v) => Number(v || 0).toLocaleString("zh-CN");
 const clock = (ts) =>
 	new Date(ts * 1000).toLocaleTimeString("zh-CN", {
@@ -19,6 +20,22 @@ function element(tag, text, className) {
 	if (className) el.className = className;
 	return el;
 }
+function statusBadge(text, state) {
+	const allowed = [
+		"confirmed",
+		"in_progress",
+		"blocked",
+		"draft",
+		"pending",
+		"unreviewed",
+	];
+	return element(
+		"span",
+		text,
+		`badge status-${allowed.includes(state) ? state : "pending"}`,
+	);
+}
+window.worklogUI = { statusBadge };
 async function api(path, options = {}) {
 	const response = await fetch(path, {
 		...options,
@@ -43,7 +60,10 @@ function url(path) {
 	);
 }
 function reportUrl() {
-	const params = new URLSearchParams({ period: $("report-period").value });
+	const params = new URLSearchParams({
+		period: $("report-period").value,
+		detail: $("report-detail").value,
+	});
 	if ($("date").value) params.set("date", $("date").value);
 	return `/api/report?${params}`;
 }
@@ -146,13 +166,22 @@ function render(value) {
 	window.dispatchEvent(new CustomEvent("worklog-data", { detail: value }));
 }
 async function load() {
-	if (loading) return;
+	if (loading) {
+		reloadRequested = true;
+		return;
+	}
 	loading = true;
+	const requestedDay = $("date").value;
 	$("refresh").disabled = true;
 	$("refresh").textContent = "刷新中…";
 	$("main-content").setAttribute("aria-busy", "true");
 	try {
-		render(await (await api(url("/api/day"))).json());
+		const value = await (await api(url("/api/day"))).json();
+		if (requestedDay !== $("date").value) {
+			reloadRequested = true;
+			return;
+		}
+		render(value);
 		if (!$("report").classList.contains("hidden")) await loadReport();
 	} catch (error) {
 		$("status").textContent = error.message;
@@ -162,20 +191,58 @@ async function load() {
 		$("refresh").disabled = false;
 		$("refresh").textContent = "刷新";
 		$("main-content").setAttribute("aria-busy", "false");
+		if (reloadRequested) {
+			reloadRequested = false;
+			load();
+		}
 	}
 }
+let reportSerial = 0;
 async function loadReport() {
-	$("report-text").textContent = await (await api(reportUrl())).text();
+	const serial = ++reportSerial;
+	const requested = reportUrl();
+	window.worklogReport = null;
+	$("report-print").disabled = true;
+	$("report-preview").textContent = "正在整理工作报告…";
+	$("report-text").textContent = "";
+	try {
+		const document = await (
+			await api(requested.replace("/api/report?", "/api/report-view?"))
+		).json();
+		if (serial !== reportSerial || requested !== reportUrl()) return;
+		$("report-text").textContent = document.markdown;
+		window.worklogReport = document;
+		renderReport(document);
+		$("report-print").disabled = false;
+	} catch (error) {
+		if (serial === reportSerial)
+			$("report-preview").textContent = error.message;
+		throw error;
+	}
 }
 $("date").addEventListener("change", load);
 $("refresh").addEventListener("click", load);
-$("report-period").addEventListener("change", async () => {
-	if (!$("report").classList.contains("hidden")) await loadReport();
-});
+for (const id of ["report-period", "report-detail"])
+	$(id).addEventListener("change", async () => {
+		if (!$("report").classList.contains("hidden")) {
+			try {
+				await loadReport();
+			} catch (error) {
+				$("status").textContent = error.message;
+			}
+		}
+	});
 $("download").addEventListener("click", async () => {
 	try {
 		const period = $("report-period").value;
 		const text = await (await api(reportUrl())).text();
+		if (window.webkit?.messageHandlers?.exportReport) {
+			window.webkit.messageHandlers.exportReport.postMessage({
+				filename: `ai-worklog-${period}-${data ? data.date : "report"}.md`,
+				text,
+			});
+			return;
+		}
 		const blob = URL.createObjectURL(
 			new Blob([text], { type: "text/markdown;charset=utf-8" }),
 		);
@@ -188,7 +255,114 @@ $("download").addEventListener("click", async () => {
 		$("status").textContent = error.message;
 	}
 });
-async function showView(button) {
+const viewHistory = [];
+function currentView() {
+	return (
+		document.querySelector("nav [aria-current=page]")?.dataset.view ||
+		"overview"
+	);
+}
+function rememberLocation() {
+	const position = {
+		view: currentView(),
+		day: data?.date || $("date").value,
+		x: window.scrollX,
+		y: window.scrollY,
+		summaryOpen: $("summary-help").open,
+		summaryPanelOpen: $("summary-panel").open,
+		period: $("report-period").value,
+		detail: $("report-detail").value,
+		focusOnly: $("report-focus-only").checked,
+		taskId: window.worklogTasks?.selectedTaskId,
+		taskFilter: window.worklogTasks?.taskFilter,
+		taskSearch: $("task-search").value,
+		creationOpen: $("task-create-panel").open,
+	};
+	const previous = viewHistory[viewHistory.length - 1];
+	if (!previous || JSON.stringify(previous) !== JSON.stringify(position))
+		viewHistory.push(position);
+	if (viewHistory.length > 40) viewHistory.shift();
+	updateBackButton();
+}
+function updateBackButton() {
+	const previous = viewHistory[viewHistory.length - 1];
+	const label = previous
+		? document.querySelector(
+				`nav [data-view="${previous.view}"] span:last-child`,
+			)?.textContent
+		: "工作台";
+	$("navigate-back").textContent =
+		currentView() === "tasks" && $("task-create-panel").open
+			? "← 返回记录列表"
+			: currentView() === "tasks" &&
+					!$("task-preview-close").classList.contains("hidden")
+				? "← 返回任务"
+				: `← 返回${label || "上一位置"}`;
+	$("navigation-location").textContent = $("heading").textContent;
+}
+async function goBack() {
+	if (currentView() === "tasks" && $("task-create-panel").open) {
+		window.worklogTasks.setCreationOpen(false);
+		return;
+	}
+	if (
+		currentView() === "tasks" &&
+		!$("task-preview-close").classList.contains("hidden")
+	) {
+		window.worklogTasks.closePreview();
+		return;
+	}
+	const position = viewHistory.pop();
+	if (!position) {
+		await showView(document.querySelector('[data-view="overview"]'), {
+			remember: false,
+		});
+		return;
+	}
+	$("report-period").value = position.period;
+	$("report-detail").value = position.detail;
+	$("report-focus-only").checked = position.focusOnly;
+	if (position.day && position.day !== $("date").value) {
+		$("date").value = position.day;
+		await load();
+		await window.worklogTasks?.refresh();
+	}
+	if (position.view === "tasks" && window.worklogTasks) {
+		window.worklogTasks.selectedTaskId = position.taskId || null;
+		window.worklogTasks.taskFilter = position.taskFilter || "all";
+		$("task-search").value = position.taskSearch || "";
+		window.worklogTasks.setCreationOpen(Boolean(position.creationOpen));
+		window.worklogTasks.reconcileTasks(window.worklogTasks.tasks || []);
+	}
+	await showView(document.querySelector(`[data-view="${position.view}"]`), {
+		remember: false,
+	});
+	$("summary-help").open = position.summaryOpen;
+	$("summary-panel").open = position.summaryPanelOpen;
+	requestAnimationFrame(() => window.scrollTo(position.x, position.y));
+	updateBackButton();
+}
+$("navigate-back").addEventListener("click", () =>
+	goBack().catch((error) => {
+		$("status").textContent = error.message;
+	}),
+);
+function applyViewContext(view) {
+	if (view === "weekly") $("report-period").value = "week";
+	else if (view !== "report") $("report-period").value = "day";
+	$("period-control").classList.toggle("hidden", view !== "report");
+	$("date-control").classList.toggle("hidden", view === "weekly");
+	$("download").classList.toggle(
+		"hidden",
+		!["weekly", "report"].includes(view),
+	);
+	$("download").classList.toggle("primary", view === "report");
+	$("download").textContent = view === "weekly" ? "导出本周周报" : "导出报告";
+	$("open-tasks").classList.toggle("hidden", view !== "overview");
+}
+async function showView(button, { remember = true, force = false } = {}) {
+	if (remember && (currentView() !== button.dataset.view || force))
+		rememberLocation();
 	window.scrollTo(0, 0);
 	for (const other of document.querySelectorAll("nav button")) {
 		other.classList.toggle("active", other === button);
@@ -200,13 +374,17 @@ async function showView(button) {
 	$("heading").textContent =
 		button.querySelector("span:last-child").textContent;
 	const descriptions = {
-		overview: "从工作任务回看成果、证据和下一步。",
+		overview: "先处理需要你关注的工作，再回看成果。",
+		weekly: "把每天的工作、成果和 AI 使用串成一周。",
 		tasks: "串联工作上下文，审阅并记录每一份成果。",
 		report: "让经过确认的工作，成为值得回看的记录。",
 		usage: "了解 AI 协作的节奏，让数据回到真实语境。",
 		sources: "清楚了解数据从哪里来，以及它的使用边界。",
 	};
 	$("view-description").textContent = descriptions[button.dataset.view];
+	applyViewContext(button.dataset.view);
+	updateBackButton();
+	if (button.dataset.view === "weekly") window.worklogWeek?.load();
 	if (button.dataset.view === "report") {
 		try {
 			await loadReport();
@@ -219,7 +397,27 @@ for (const button of document.querySelectorAll("nav button")) {
 	button.addEventListener("click", () => showView(button));
 }
 $("open-tasks").addEventListener("click", () =>
-	showView(document.querySelector('[data-view="tasks"]')),
+	window.worklogTasks?.beginTriage(),
 );
+$("open-week").addEventListener("click", () =>
+	showView(document.querySelector('[data-view="weekly"]')),
+);
+$("review-count-link").addEventListener("click", () =>
+	$("task-focus").scrollIntoView({ block: "start" }),
+);
+$("inbox-count-link").addEventListener("click", () =>
+	(document.getElementById("inbox-heading") || $("task-focus")).scrollIntoView({
+		block: "start",
+	}),
+);
+$("outcome-count-link").addEventListener("click", () =>
+	$("overview-outcomes").scrollIntoView({ block: "start" }),
+);
+$("blocked-count-link").addEventListener("click", () => {
+	const task = window.worklogTasks?.tasks?.find(
+		(item) => item.review?.status === "blocked",
+	);
+	if (task) window.worklogTasks.openReview(task);
+});
 load();
 setInterval(load, 30000);

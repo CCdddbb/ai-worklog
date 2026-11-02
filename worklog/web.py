@@ -8,10 +8,14 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .core import bounds
+from .documents import report_document
 from .evidence import EvidenceUnavailable
 from .store import markdown, period_markdown, report_data
+from .weekly import week_data
 
 STATIC = Path(__file__).resolve().parents[1] / 'static'
+# Four bounded 2,000-character review fields can exceed 16 KiB in UTF-8.
+MAX_JSON_BODY = 65536
 
 
 def make_server(db_path, day, zone, port=8766, task_service=None):
@@ -51,14 +55,15 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
             url = urlsplit(self.path)
             assets = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'),
                       '/tasks.js': ('tasks.js', 'text/javascript'), '/dashboard.js': ('dashboard.js', 'text/javascript'),
-                      '/style.css': ('style.css', 'text/css')}
+                      '/weekly.js': ('weekly.js', 'text/javascript'), '/reports.js': ('reports.js', 'text/javascript'),
+                      '/style.css': ('style.css', 'text/css'), '/workbench.css': ('workbench.css', 'text/css')}
             if not self.access(private=url.path not in assets):
                 return
             if url.path in assets:
                 name, mime = assets[url.path]
                 self.send(200, (STATIC / name).read_bytes(), mime + '; charset=utf-8')
                 return
-            if url.path not in ['/api/day', '/api/report', '/api/tasks', '/api/task-preview']:
+            if url.path not in ['/api/day', '/api/week', '/api/report', '/api/report-view', '/api/tasks', '/api/task-preview']:
                 self.send(404, {'error': 'not_found'})
                 return
             try:
@@ -67,7 +72,11 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                 if len(target_day) != 10:
                     raise ValueError('Invalid date')
                 bounds(target_day, zone)
-                if url.path == '/api/tasks':
+                if url.path == '/api/week':
+                    self.send(200, week_data(db_path, target_day, zone))
+                elif url.path == '/api/report-view':
+                    self.send(200, report_document(db_path, target_day, zone, query.get('period', ['day'])[0], query.get('detail', ['brief'])[0]))
+                elif url.path == '/api/tasks':
                     self.send(200, task_service.list(target_day) if task_service else {'enabled': False, 'tasks': []})
                 elif url.path == '/api/task-preview':
                     if not task_service:
@@ -82,8 +91,8 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                         period = query.get('period', ['day'])[0]
                         if period not in ('day', 'week', 'month'):
                             raise ValueError('Invalid period')
-                        self.send(200, markdown(data) if period == 'day' else
-                                  period_markdown(db_path, target_day, zone, period),
+                        self.send(200, markdown(data, query.get('detail', ['brief'])[0]) if period == 'day' else
+                                  period_markdown(db_path, target_day, zone, period, query.get('detail', ['brief'])[0]),
                                   'text/plain; charset=utf-8')
             except (ValueError, OverflowError):
                 self.send(400, {'error': 'invalid_date_or_scope'})
@@ -95,7 +104,7 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                 return
             path = urlsplit(self.path).path
             if path not in ['/api/tasks', '/api/summarize', '/api/task-review',
-                            '/api/summary-settings', '/api/session-names', '/api/session-rename']:
+                            '/api/summary-settings', '/api/session-names', '/api/session-rename', '/api/session-triage']:
                 self.send(404, {'error': 'not_found'})
                 return
             if not task_service:
@@ -103,7 +112,7 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                 return
             try:
                 length = int(self.headers.get('Content-Length', '0'))
-                if not 0 < length <= 16384 or self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
+                if not 0 < length <= MAX_JSON_BODY or self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
                     self.send(413, {'error': 'bounded_json_required'})
                     return
                 # Bound client stalls; a source excerpt is never accepted from the browser.
@@ -119,6 +128,10 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                     if set(body) != {'date', 'consent'} or body['consent'] is not True:
                         raise ValueError('Explicit consent required')
                     self.send(200, task_service.name_sessions(body['date']))
+                elif path == '/api/session-triage':
+                    if set(body) != {'session', 'date', 'deferred'}:
+                        raise ValueError('Invalid inbox fields')
+                    self.send(200, task_service.defer_session(body['session'], body['date'], body['deferred']))
                 elif path == '/api/session-rename':
                     if set(body) != {'session', 'name'}:
                         raise ValueError('Invalid name fields')
@@ -144,6 +157,8 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                 hints = {
                     '/api/summary-settings': '无法更新模型设置。请确认没有排队/运行中的总结，并检查 CodeBuddy CLI 登录或 Pi CLI 默认模型；摘录需要已配置来源。',
                     '/api/session-rename': '名称需为 1–80 个字符，且会话必须已导入。',
+                    '/api/task-review': '结果、验证、下一步和经验每项最多 2000 字；已确认状态需填写结果，关联提交须属于任务当日。',
+                    '/api/session-triage': '只能暂存所选日期内尚未关联任务的会话；可随时恢复，有新活动会重新提醒。',
                     '/api/session-names': '请确认本地主题提取授权、日期和来源目录。',
                 }
                 self.send(400, {'error': 'invalid_scope_or_limit', 'hint': hints.get(path,

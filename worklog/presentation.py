@@ -5,6 +5,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from .core import redact_title
+from .triage import deferred_sessions
 
 
 def topic_name(titles):
@@ -21,11 +22,13 @@ def topic_name(titles):
 
 def decorate_sessions(db, data):
     names = {row['session']: dict(row) for row in db.execute('SELECT * FROM session_names')}
+    deferred = deferred_sessions(db, data['date'], data['timezone'])
     linked = {}
     for row in db.execute('SELECT title,sessions FROM tasks WHERE day=? ORDER BY created_at', (data['date'],)):
         for session in json.loads(row['sessions']):
             linked[session] = row['title']
     for session in data['sessions']:
+        session['deferred'] = session['session'] in deferred and session['session'] not in linked
         named = names.get(session['session'])
         topic = topic_name(session['titles'])
         local_time = datetime.fromtimestamp(session['first'], ZoneInfo(data['timezone'])).strftime('%H:%M')

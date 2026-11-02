@@ -129,7 +129,7 @@ class TaskService:
             task_id = uuid.uuid4().hex
             with db:
                 db.execute('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?)',
-                           (task_id, redact(title, 100), day, json.dumps(list(dict.fromkeys(sessions))),
+                           (task_id, redact(title, 150), day, json.dumps(list(dict.fromkeys(sessions))),
                             start, None, 'open', self.clock()))
             return self._task(task_id)
         finally:
@@ -212,10 +212,15 @@ class TaskService:
                     'SELECT commit_id FROM task_git WHERE task_id=?', (task['id'],))]
                 job = db.execute('SELECT id,mode,status,error,provider,model,created_at,finished_at,output_json,usage_json '
                                  'FROM summaries WHERE task_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1', (task['id'],)).fetchone()
-                saved = db.execute("SELECT output_json,input_json FROM summaries WHERE task_id=? AND status='success' "
+                saved = db.execute("SELECT id,output_json,input_json,created_at,finished_at FROM summaries WHERE task_id=? AND status='success' "
                     'ORDER BY created_at DESC,rowid DESC LIMIT 1', (task['id'],)).fetchone()
                 task['saved_summary'] = json.loads(saved['output_json']) if saved else None
+                task['saved_summary_job_id'] = saved['id'] if saved else None
                 task['saved_summary_quality'] = summary_quality(json.loads(saved['input_json']), task['saved_summary']) if saved else None
+                from .review_focus import review_focus
+                task['review_focus'] = review_focus(task['review'], task['saved_summary'], task['saved_summary_quality'],
+                    (saved['finished_at'] or saved['created_at']) if saved else None,
+                    json.loads(saved['input_json']).get('coverage') if saved else None)
                 task['summary'] = dict(job) if job else None
                 if job:
                     task['summary']['result'] = json.loads(task['summary'].pop('output_json') or 'null')
@@ -223,7 +228,8 @@ class TaskService:
                 tasks.append(task)
             today = datetime.fromtimestamp(self.clock(), ZoneInfo(self.zone)).date().isoformat()
             runs_today = db.execute('SELECT COUNT(*) FROM summaries WHERE started_at>=? AND started_at<?', bounds(today, self.zone)).fetchone()[0]
-            return {'tasks': tasks, 'commits': commits, 'enabled': True, 'llm_enabled': self.runner is not None,
+            return {'tasks': tasks, 'total_tasks': db.execute('SELECT COUNT(*) FROM tasks WHERE day=?', (day,)).fetchone()[0],
+                    'commits': commits, 'enabled': True, 'llm_enabled': self.runner is not None,
                     'auto': self.auto, 'allow_excerpts': self.allow_excerpts,
                     'runs_today': runs_today,
                     'idle_minutes': self.idle_seconds / 60, 'daily_limit': self.daily_limit,
@@ -291,6 +297,14 @@ class TaskService:
         return {'llm_enabled': True, 'allow_excerpts': self.allow_excerpts,
                 'provider': self.runner.provider, 'model': self.runner.model}
 
+    def defer_session(self, session, day, deferred):
+        from .triage import defer_session
+        db = connect(self.path)
+        try:
+            return defer_session(db, session, day, self.zone, deferred, self.clock())
+        finally:
+            db.close()
+
     def rename_session(self, session, name):
         if not isinstance(session, str) or not re.fullmatch(r'[a-f0-9]{16}', session):
             raise ValueError('Invalid session')
@@ -351,7 +365,11 @@ class TaskService:
                 sessions = [r[0] for r in db.execute("SELECT DISTINCT session FROM events WHERE ts>=? AND ts<? AND source IN ('pi','codex')",
                                                     (max(start, self.started), min(end, now + 1)))]
                 tasks = [dict(r) for r in db.execute("SELECT * FROM tasks WHERE day=? AND status='open'", (day,))]
+                from .triage import deferred_sessions
+                deferred = deferred_sessions(db, day, self.zone)
                 for session in sessions:
+                    if session in deferred:
+                        continue
                     if any(session in json.loads(t['sessions']) for t in tasks):
                         continue
                     latest_end = db.execute("SELECT MAX(end_ts) FROM tasks WHERE day=? AND status='completed' AND sessions LIKE ?",

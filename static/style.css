@@ -1041,6 +1041,359 @@ footer {
 		display: block;
 	}
 }
+
+.week-toolbar {
+	flex-wrap: wrap;
+	gap: 12px;
+}
+.week-toolbar h2 {
+	margin: 0;
+}
+.week-chart {
+	display: grid;
+	grid-template-columns: repeat(7, minmax(0, 1fr));
+	gap: 6px;
+	margin-top: 22px;
+}
+.week-column {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	min-width: 0;
+	padding: 6px 1px;
+	border: 0;
+	background: transparent;
+	gap: 5px;
+}
+.week-column:hover {
+	background: #eef3ff;
+}
+.week-column small {
+	color: var(--muted);
+	font-size: 10px;
+}
+.week-count {
+	font-size: 11px;
+	max-width: 100%;
+	overflow-wrap: anywhere;
+}
+.week-track {
+	display: flex;
+	flex-direction: column-reverse;
+	justify-content: flex-start;
+	height: 140px;
+	width: min(30px, 75%);
+	border-bottom: 1px solid var(--line);
+}
+.week-fill {
+	display: block;
+	flex-shrink: 0;
+	width: 100%;
+}
+.state-confirmed {
+	background: #65a88a;
+}
+.state-in_progress,
+.state-usage {
+	background: #86a4ee;
+}
+.state-blocked {
+	background: #dcae5b;
+}
+.state-unreviewed {
+	background: #c8d1e0;
+}
+.week-day {
+	border-top: 1px solid var(--line);
+	padding: 18px 0;
+}
+.week-day summary {
+	cursor: pointer;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+	justify-content: space-between;
+}
+.week-task {
+	padding: 16px 0;
+	border-bottom: 1px solid var(--line);
+	overflow-wrap: anywhere;
+}
+.week-task .badge {
+	margin-left: 10px;
+}
+.week-day > button {
+	margin-top: 14px;
+}
+#weekly .panel {
+	min-width: 0;
+}
+@media (max-width: 700px) {
+	.week-toolbar {
+		align-items: flex-start;
+	}
+	.week-day summary {
+		flex-direction: column;
+	}
+	.week-chart {
+		gap: 2px;
+	}
+}
+.week-key::before {
+	content: "";
+	display: inline-block;
+	width: 8px;
+	height: 8px;
+	margin-right: 6px;
+	border-radius: 2px;
+}
+.key-confirmed::before {
+	background: #65a88a;
+}
+.key-progress::before {
+	background: #86a4ee;
+}
+.key-blocked::before {
+	background: #dcae5b;
+}
+.key-unreviewed::before {
+	background: #c8d1e0;
+}
+.review-draft-controls {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+	align-items: center;
+	grid-column: 1 / -1;
+}
+.review-draft-controls select {
+	min-width: 0;
+	max-width: 100%;
+}
+.deferred-sessions {
+	border-top: 1px solid var(--line);
+	padding-top: 16px;
+	margin-top: 16px;
+}
+.deferred-sessions summary {
+	cursor: pointer;
+	color: var(--muted);
+}
+.report-section {
+	border-top: 1px solid var(--line);
+	padding-top: 22px;
+	margin-top: 24px;
+}
+.report-lead {
+	font-size: 16px;
+	line-height: 1.8;
+}
+.report-record {
+	padding: 16px 0;
+	overflow-wrap: anywhere;
+}
+.report-record h4 {
+	margin: 0 0 10px;
+}
+.report-outcome {
+	font-size: 15px;
+	white-space: pre-wrap;
+}
+.report-focus-row {
+	padding: 14px;
+	margin: 12px 0;
+	background: #fff9ed;
+	border-radius: 8px;
+	overflow-wrap: anywhere;
+}
+.report-work-item,
+.report-draft-source,
+.report-evidence,
+.report-source {
+	margin-top: 16px;
+}
+.report-work-item summary,
+.report-draft-source summary,
+.report-evidence summary,
+.report-source summary {
+	cursor: pointer;
+	line-height: 1.8;
+}
+.report-field {
+	display: grid;
+	grid-template-columns: 100px minmax(0, 1fr);
+	gap: 14px;
+	padding: 8px 0;
+}
+.report-field-text {
+	margin: 0;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+.report-evidence blockquote {
+	margin: 12px 0;
+	border-left: 3px solid var(--line);
+	padding: 4px 16px;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+.report-controls {
+	flex-wrap: wrap;
+	gap: 12px;
+}
+.report-controls label {
+	display: flex;
+	gap: 7px;
+	align-items: center;
+}
+.report-controls input {
+	min-height: 0;
+}
+.report-trend {
+	display: flex;
+	gap: 8px;
+	overflow-x: auto;
+	padding: 16px 0;
+}
+.report-trend-column {
+	display: flex;
+	flex: 1;
+	min-width: 35px;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+	font-size: 11px;
+}
+.report-trend-track {
+	display: flex;
+	flex-direction: column-reverse;
+	width: 24px;
+	height: 100px;
+	border-bottom: 1px solid var(--line);
+}
+.report-trend-track span {
+	display: block;
+	flex-shrink: 0;
+}
+.review-focus {
+	background: #fff9ed;
+	padding: 14px;
+	margin: 12px 0;
+	border-radius: 8px;
+}
+.review-focus summary {
+	cursor: pointer;
+	font-weight: 600;
+}
+@media (max-width: 700px) {
+	.report-field {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 6px;
+	}
+}
+@media print {
+	@page {
+		margin: 16mm;
+	}
+	body {
+		background: white;
+		color: #111;
+		font-size: 11pt;
+		print-color-adjust: exact;
+		-webkit-print-color-adjust: exact;
+	}
+	body > aside,
+	.skip-link,
+	#main-content > .navigation-bar,
+	main > header,
+	#status,
+	footer,
+	.report-controls,
+	.view:not(#report),
+	.report-evidence {
+		display: none;
+	}
+	main {
+		margin: 0;
+		padding: 0;
+		max-width: none;
+		width: auto;
+	}
+	#report {
+		display: block;
+		padding: 0;
+		border: 0;
+		box-shadow: none;
+	}
+	#report-preview > h2 {
+		font-size: 20pt;
+	}
+	.report-section {
+		margin-top: 18px;
+		padding-top: 12px;
+	}
+	.report-work-item,
+	.report-focus-row {
+		break-inside: avoid;
+	}
+	.report-record {
+		break-inside: auto;
+	}
+	.report-record h4 {
+		break-after: avoid;
+	}
+	.report-draft-source:not([open]) {
+		display: none;
+	}
+	.report-trend {
+		overflow: visible;
+		gap: 3px;
+	}
+	.report-trend-column {
+		min-width: 0;
+		font-size: 8px;
+	}
+	.report-trend-track {
+		width: 12px;
+	}
+	.report-stats {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: 8px;
+	}
+	.report-stats article {
+		padding: 10px;
+	}
+}
+.report-work-item h5 {
+	font-size: 14px;
+	margin: 14px 0 10px;
+}
+@media print {
+	.report-work-detail {
+		display: none;
+	}
+	#report-preview.report-full .report-work-detail {
+		display: block;
+	}
+}
+.navigation-bar {
+	position: sticky;
+	top: 0;
+	z-index: 20;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px;
+	padding: 10px 0;
+	margin-bottom: 14px;
+	background: var(--bg);
+	border-bottom: 1px solid var(--line);
+}
+#task-preview-close {
+	scroll-margin-top: 70px;
+	margin: 12px 0;
+}
 @media (prefers-reduced-motion: reduce) {
 	button {
 		transition: none;

@@ -5,6 +5,7 @@ __pycache__/
 .env
 .env.*
 node_modules/
+dist/
 .DS_Store
 .ruff_cache/
 .pytest_cache/

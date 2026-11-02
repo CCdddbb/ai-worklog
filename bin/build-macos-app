@@ -1,0 +1,22 @@
+#!/bin/bash
+# Build an offline, native WKWebView shell. Python remains an explicit prerequisite.
+set -euo pipefail
+ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd)"
+APP="$ROOT/dist/AI Worklog.app"
+if [[ "$(uname -s)" != Darwin ]]; then
+  echo 'macOS and Xcode Command Line Tools are required.' >&2
+  exit 1
+fi
+command -v swiftc >/dev/null
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+# Copy source only: never include databases, keys, tests, personal logs or caches.
+cp "$ROOT/desktop/macos/Info.plist" "$APP/Contents/Info.plist"
+mkdir -p "$APP/Contents/Resources/worklog" "$APP/Contents/Resources/static"
+find "$APP/Contents/Resources/worklog" "$APP/Contents/Resources/static" -type f -delete
+cp "$ROOT"/worklog/*.py "$APP/Contents/Resources/worklog/"
+cp "$ROOT"/static/*.js "$ROOT"/static/*.css "$ROOT"/static/*.html "$APP/Contents/Resources/static/"
+swiftc -swift-version 5 -target "$(uname -m)-apple-macosx12.0" -O -framework AppKit -framework WebKit \
+  "$ROOT/desktop/macos/Worklog.swift" -o "$APP/Contents/MacOS/AIWorklog"
+# Ad-hoc signature is for local use; this is not a notarized distribution build.
+codesign --force --deep --sign - "$APP"
+printf 'Built: %s\nOpen it in Finder, or run: open "%s"\n' "$APP" "$APP"

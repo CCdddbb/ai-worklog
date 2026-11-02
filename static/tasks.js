@@ -7,7 +7,68 @@ class TaskBoard {
 		this.llmEnabled = false;
 		this.commits = [];
 		this.drafts = new Map();
+		this.savingReviews = new Set();
 		this.quickPending = new Set();
+		this.staleCards = new Set();
+		this.refreshSerial = 0;
+		this.previewSerial = 0;
+		this.selectedTaskId = null;
+		this.selectedByDay = new Map();
+		this.creationByDay = new Map();
+		this.taskFilter = "all";
+		this.creating = false;
+		this.taskDataLoaded = false;
+		this.lastReadError = false;
+		$("task-new").addEventListener("click", () => this.openCreation());
+		$("task-create-discard").addEventListener("click", () => {
+			if (this.creating)
+				return this.notice("创建请求正在处理，请等待结果后再放弃草稿。");
+			if (
+				!confirm(
+					"清空当前日期尚未创建的表单？只清除这份新建草稿，不删除任何工作记录或审阅修订。",
+				)
+			)
+				return;
+			$("task-title").value = "";
+			$("task-start").value = "00:00";
+			for (const input of document.querySelectorAll("#task-sessions input"))
+				input.checked = false;
+			this.creationByDay.delete(this.current?.date);
+			this.setCreationOpen(false);
+		});
+		$("task-create-panel").addEventListener("toggle", () => {
+			$("tasks").classList.toggle(
+				"creating-record",
+				$("task-create-panel").open,
+			);
+			updateBackButton();
+		});
+		$("task-search").addEventListener("input", () => {
+			this.selectedTaskId = null;
+			this.closePreview(false);
+			if (this.taskDataLoaded) this.reconcileTasks(this.tasks || []);
+		});
+		$("task-choose-record").addEventListener("click", () => {
+			this.closePreview(false);
+			$("task-index-items")
+				.closest("section")
+				.scrollIntoView({ block: "start" });
+			$("task-search").focus({ preventScroll: true });
+		});
+		$("task-preview-close").addEventListener("click", () =>
+			this.closePreview(),
+		);
+		$("task-list").addEventListener("focusout", () => {
+			setTimeout(() => {
+				if (this.staleCards.size) this.refresh();
+			}, 0);
+		});
+		window.addEventListener("beforeunload", (event) => {
+			if (this.hasUnsavedWork()) {
+				event.preventDefault();
+				event.returnValue = "";
+			}
+		});
 		$("task-create").addEventListener("click", () => this.create());
 		window.addEventListener("worklog-data", (event) =>
 			this.update(event.detail),
@@ -26,9 +87,47 @@ class TaskBoard {
 			),
 		);
 		if (this.current && this.current.date !== value.date) {
+			this.creationByDay.set(this.current.date, {
+				title: $("task-title").value,
+				start: $("task-start").value,
+				sessions: [...selected],
+				open: $("task-create-panel").open,
+			});
+			this.selectedByDay.set(this.current.date, this.selectedTaskId);
+			const incoming = this.creationByDay.get(value.date);
+			$("task-title").value = incoming?.title || "";
+			$("task-start").value = incoming?.start || "00:00";
 			selected.clear();
-			this.drafts.clear();
+			for (const session of incoming?.sessions || []) selected.add(session);
+			this.selectedTaskId = this.selectedByDay.get(value.date) || null;
+			this.setCreationOpen(Boolean(incoming?.open));
+			this.closePreview(false);
+			this.tasks = [];
+			this.taskDataLoaded = false;
+			this.totalTasks = 0;
+			this.indexSignature = null;
+			this.pending = false;
+			this.staleCards.clear();
+			for (const id of [
+				"overview-tasks",
+				"overview-needs-review",
+				"overview-blocked",
+				"overview-untriaged",
+				"overview-confirmed",
+			])
+				$(id).textContent = "—";
+			$("open-tasks").textContent = "开始整理";
+			$("overview-record-scope").classList.add("hidden");
+			for (const id of ["task-focus", "overview-outcomes", "summary-content"])
+				$(id).replaceChildren(
+					element("p", "正在读取所选日期的工作记录…", "hint"),
+				);
+			$("task-index-count").textContent = "正在读取所选日期…";
+			for (const button of $("task-filters").children) button.disabled = true;
+			$("task-index-items").replaceChildren();
+			$("task-list").replaceChildren(element("p", "正在读取所选日期…", "hint"));
 		}
+		$("task-create-day").textContent = `· ${value.date}`;
 		this.current = value;
 		$("task-sessions").replaceChildren();
 		const projects = new Map();
@@ -86,16 +185,27 @@ class TaskBoard {
 	async refresh() {
 		if (!this.current) return;
 		const day = this.current.date;
+		const serial = ++this.refreshSerial;
 		const wasPending = this.pending;
 		try {
 			const value = await (
 				await api(`/api/tasks?date=${encodeURIComponent(day)}`)
 			).json();
-			if (this.current.date !== day) return;
+			if (this.current.date !== day || serial !== this.refreshSerial) return;
 			this.enabled = value.enabled;
 			this.llmEnabled = value.llm_enabled;
 			this.commits = value.commits || [];
 			this.tasks = value.tasks;
+			this.taskDataLoaded = true;
+			if (this.lastReadError) {
+				this.notice("列表已重新载入；未保存的文字仍保留。");
+				if ($("status").textContent.startsWith("任务记录列表暂未刷新：")) {
+					$("status").textContent = "工作记录已重新载入。";
+					$("status").className = "";
+				}
+				this.lastReadError = false;
+			}
+			this.totalTasks = value.total_tasks ?? value.tasks.length;
 			this.allowExcerpts = value.allow_excerpts;
 			if (value.llm_enabled && !this.modelSettingsInitialized) {
 				$("summary-backend").value =
@@ -110,46 +220,330 @@ class TaskBoard {
 				: "启用 AI 总结";
 			if (document.activeElement !== $("summary-excerpts"))
 				$("summary-excerpts").checked = Boolean(value.allow_excerpts);
-			$("task-create").disabled = !value.enabled;
+			$("task-create").disabled = !value.enabled || this.creating;
 			$("task-settings").textContent = value.enabled
 				? value.llm_enabled
 					? `模型 ${value.provider}/${value.model} · ${value.allow_excerpts ? "脱敏摘录已授权，可能发往云端" : "仅元数据"} · ${value.auto ? `新活动空闲${value.idle_minutes}分钟后自动阶段总结` : "自动模式未启用"} · 今日已执行${value.runs_today}/${value.daily_limit}个总结任务（不是费用上限）`
-					: "本地任务记录已启用；点击右上角“总结设置”启用模型，再选择会话生成草稿。"
+					: "可直接手动记录；需要 AI 草稿时，在“模型与授权”中启用。"
 				: "本地任务服务不可用。";
 			this.pending = value.tasks.some(
 				(task) =>
 					task.summary && ["queued", "running"].includes(task.summary.status),
 			);
-			$("task-list").replaceChildren();
-			for (const task of value.tasks) this.renderTask(task);
+			this.reconcileTasks(value.tasks);
 			this.renderFocus(value.tasks);
 			renderSummaryBoard(value.tasks, this.current);
 			if (wasPending && !this.pending) load();
 		} catch (error) {
+			if (this.current.date !== day || serial !== this.refreshSerial) return;
+			this.lastReadError = true;
 			this.notice(error.message);
+			$("status").textContent = `任务记录列表暂未刷新：${error.message}`;
+			$("status").className = "error";
+			if (!this.tasks?.length) {
+				$("task-index-count").textContent =
+					"读取失败，请刷新重试；不把失败当成没有记录。";
+				for (const id of [
+					"task-list",
+					"task-focus",
+					"overview-outcomes",
+					"summary-content",
+				])
+					$(id).replaceChildren(
+						element(
+							"p",
+							"所选日期的工作记录尚未加载成功，请刷新重试。",
+							"hint",
+						),
+					);
+			}
 		}
+	}
+	hasUnsavedWork() {
+		return Boolean(
+			this.drafts.size ||
+				this.savingReviews.size ||
+				this.creating ||
+				$("task-title").value.trim() ||
+				[...this.creationByDay].some(
+					([day, value]) => day !== this.current?.date && value.title.trim(),
+				),
+		);
+	}
+	setCreationOpen(open) {
+		$("task-create-panel").open = open;
+		$("tasks").classList.toggle("creating-record", open);
+		updateBackButton();
+	}
+	openCreation() {
+		this.closePreview(false);
+		this.setCreationOpen(true);
+		$("task-create-panel").scrollIntoView({ block: "start" });
+		$("task-title").focus({ preventScroll: true });
+	}
+	matchesFilter(task, filter) {
+		if (filter === "needs_review")
+			return Boolean(task.review_focus?.needs_review);
+		return filter === "all" || task.review?.status === filter;
+	}
+	filteredTasks(tasks) {
+		const query = $("task-search").value.trim().toLocaleLowerCase("zh-CN");
+		return tasks.filter(
+			(task) =>
+				this.matchesFilter(task, this.taskFilter) &&
+				(!query ||
+					`${task.title} ${task.review?.outcome || ""}`
+						.toLocaleLowerCase("zh-CN")
+						.includes(query)),
+		);
+	}
+	renderTaskIndex(tasks, filtered) {
+		for (const [filter, label] of [
+			["all", "全部"],
+			["needs_review", "待核对"],
+			["blocked", "受阻"],
+			["confirmed", "已确认"],
+			["in_progress", "进行中"],
+		]) {
+			const count = tasks.filter((task) =>
+				this.matchesFilter(task, filter),
+			).length;
+			let button = [...$("task-filters").children].find(
+				(item) => item.dataset.filter === filter,
+			);
+			if (!button) {
+				button = this.button("", () => {
+					this.taskFilter = filter;
+					this.selectedTaskId = null;
+					this.closePreview(false);
+					this.reconcileTasks(this.tasks || []);
+				});
+				button.className = "task-filter";
+				button.dataset.filter = filter;
+				$("task-filters").append(button);
+			}
+			button.textContent = `${label} ${count}`;
+			button.disabled = false;
+			button.setAttribute("aria-pressed", String(this.taskFilter === filter));
+		}
+		$("task-index-count").textContent =
+			`显示 ${filtered.length} / ${tasks.length} 条已载入记录` +
+			(this.totalTasks > tasks.length
+				? `；当日共 ${this.totalTasks} 条，当前最多载入 100 条，搜索仅限已载入部分。`
+				: "");
+		const signature = JSON.stringify([
+			this.selectedTaskId,
+			filtered.map((task) => [
+				task.id,
+				task.title,
+				task.review?.status,
+				task.review?.outcome,
+				task.review_focus,
+				task.summary?.status,
+				this.drafts.has(task.id),
+			]),
+		]);
+		if (signature === this.indexSignature) return;
+		this.indexSignature = signature;
+		const list = $("task-index-items");
+		const scroll = list.scrollTop;
+		const focusedId = list.contains(document.activeElement)
+			? document.activeElement.dataset.taskId
+			: null;
+		list.replaceChildren();
+		for (const task of filtered) {
+			const button = this.button("", () => this.selectTask(task.id));
+			button.className = "task-list-item";
+			button.dataset.taskId = task.id;
+			button.setAttribute(
+				"aria-pressed",
+				String(task.id === this.selectedTaskId),
+			);
+			button.title = task.title;
+			button.append(
+				element("strong", task.title, "task-item-title"),
+				statusBadge(
+					task.review_focus?.updated_since_review
+						? "新草稿待核对"
+						: task.review
+							? { confirmed: "已确认", blocked: "受阻", in_progress: "进行中" }[
+									task.review.status
+								]
+							: "待审阅",
+					task.review_focus?.updated_since_review
+						? "draft"
+						: task.review?.status || "draft",
+				),
+				element(
+					"span",
+					task.review?.outcome ||
+						task.saved_summary?.overview.text ||
+						"尚未填写工作结论",
+					"task-list-snippet",
+				),
+			);
+			if (this.drafts.has(task.id))
+				button.append(statusBadge("未保存修订", "draft"));
+			list.append(button);
+		}
+		if (!filtered.length)
+			list.append(
+				element(
+					"p",
+					tasks.length
+						? "没有匹配记录；修改搜索或状态筛选再试。"
+						: "这个日期还没有工作记录，可先新建一项。",
+					"hint",
+				),
+			);
+		list.scrollTop = scroll;
+		if (focusedId)
+			[...list.querySelectorAll("button")]
+				.find((button) => button.dataset.taskId === focusedId)
+				?.focus({ preventScroll: true });
+	}
+	selectTask(id) {
+		this.selectedTaskId = id;
+		this.closePreview(false);
+		this.reconcileTasks(this.tasks || []);
+		const card = $(`task-${id}`);
+		card?.scrollIntoView({ block: "start" });
+		card?.querySelector(".review-outcome")?.focus({ preventScroll: true });
+	}
+	reconcileTasks(tasks) {
+		const filtered = this.filteredTasks(tasks);
+		let task = tasks.find((item) => item.id === this.selectedTaskId);
+		const retainDraft = task && this.drafts.has(task.id);
+		if (!task || (!filtered.includes(task) && !retainDraft))
+			task = filtered[0] || null;
+		this.selectedTaskId = task?.id || null;
+		if (this.current)
+			this.selectedByDay.set(this.current.date, this.selectedTaskId);
+		this.renderTaskIndex(tasks, filtered);
+		$("task-filter-note").textContent =
+			task && !filtered.includes(task)
+				? "当前记录有未保存修订，已暂时保留，避免后台更新打断编辑。"
+				: "一次只处理一项；切换记录后，未保存修订仍可返回继续。";
+		const list = $("task-list");
+		for (const child of [...list.children])
+			if (!task || child.id !== `task-${task.id}`) {
+				this.staleCards.delete(child.id.slice(5));
+				child.remove();
+			}
+		if (!task) {
+			list.replaceChildren(
+				element(
+					"p",
+					tasks.length
+						? "当前筛选下没有工作。清除搜索或选择“全部”即可返回。"
+						: "新建记录后，在这里核对结果、验证和下一步。",
+					"hint",
+				),
+			);
+			return;
+		}
+		const card = $(`task-${task.id}`);
+		const signature = JSON.stringify([task, this.commits]);
+		if (card?.renderSignature === signature) return;
+		if (
+			card?.contains(document.activeElement) &&
+			document.activeElement.matches("input, textarea, select")
+		) {
+			this.staleCards.add(task.id);
+			return;
+		}
+		const replacement = this.renderTask(task);
+		replacement.renderSignature = signature;
+		if (card) card.replaceWith(replacement);
+		else list.append(replacement);
+		this.staleCards.delete(task.id);
+	}
+	openReview(task, { remember = true } = {}) {
+		this.taskFilter = "all";
+		$("task-search").value = "";
+		this.selectedTaskId = task.id;
+		this.setCreationOpen(false);
+		this.reconcileTasks(this.tasks || [task]);
+		showView(document.querySelector('[data-view="tasks"]'), { remember });
+		const card = $(`task-${task.id}`);
+		card?.scrollIntoView({ block: "center" });
+		card?.querySelector(".review-outcome")?.focus({ preventScroll: true });
+	}
+	async deferSession(session, deferred) {
+		await api("/api/session-triage", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				session: session.session,
+				date: this.current.date,
+				deferred,
+			}),
+		});
+		await load();
+	}
+	beginTriage() {
+		const task =
+			this.tasks?.find((item) => item.review_focus?.needs_review) ||
+			this.tasks?.find((item) => item.review?.status === "blocked");
+		if (task) return this.openReview(task);
+		showView(document.querySelector('[data-view="tasks"]'));
+		this.openCreation();
 	}
 	renderFocus(tasks) {
 		$("task-focus").replaceChildren();
-		if (!tasks.length) {
+		const actionable = tasks.filter(
+			(task) =>
+				task.review_focus?.needs_review ||
+				task.review?.status === "blocked" ||
+				task.review_focus?.issues.length,
+		);
+		if (
+			!actionable.length &&
+			(tasks.length ||
+				!this.current.sessions.some((session) => !session.deferred))
+		) {
 			const empty = element("div", undefined, "focus-empty");
 			empty.append(
-				element("strong", "暂无任务记录"),
-				element("p", "点击“整理任务”，关联会话或创建手动记录。", "hint"),
+				element(
+					"strong",
+					tasks.length ? "暂无新的待核对工作" : "先把今天的工作整理起来",
+				),
+				element(
+					"p",
+					tasks.length
+						? "已审阅的成果在下方；新会话仍可继续整理。"
+						: "从下方会话生成草稿，或点击“开始整理”手动记录。",
+					"hint",
+				),
 			);
 			$("task-focus").append(empty);
 		}
-		for (const task of tasks) {
+		for (const task of actionable.slice(0, 5)) {
 			const row = element("article", undefined, "focus-row");
-			const state = task.review
-				? { confirmed: "已确认", in_progress: "进行中", blocked: "受阻" }[
-						task.review.status
-					]
-				: "待审阅";
+			const state = task.review_focus?.updated_since_review
+				? "新草稿待核对"
+				: task.review
+					? { confirmed: "已确认", in_progress: "进行中", blocked: "受阻" }[
+							task.review.status
+						]
+					: "待审阅";
 			row.append(
 				element("strong", task.title),
-				element("span", state, "badge"),
+				statusBadge(
+					state,
+					task.review_focus?.updated_since_review
+						? "draft"
+						: task.review?.status || "draft",
+				),
 			);
+			if (task.review_focus?.updated_since_review)
+				row.append(
+					element(
+						"p",
+						"有新草稿待核对，原人工结论未覆盖新增内容。",
+						"summary-warning",
+					),
+				);
 			row.append(
 				element(
 					"p",
@@ -162,27 +556,122 @@ class TaskBoard {
 					"hint",
 				),
 			);
+			row.append(
+				this.button(task.review ? "继续修订" : "审阅这项工作", () =>
+					this.openReview(task),
+				),
+			);
 			$("task-focus").append(row);
 		}
+		if (actionable.length > 5)
+			$("task-focus").append(
+				this.button(`查看全部 ${actionable.length} 项待处理`, () =>
+					showView(document.querySelector('[data-view="tasks"]')),
+				),
+			);
+		$("overview-outcomes").replaceChildren();
+		const confirmed = tasks.filter(
+			(task) => task.review?.status === "confirmed",
+		);
+		for (const task of confirmed.slice(0, 3)) {
+			const row = element("article", undefined, "outcome-row");
+			row.append(
+				element("strong", task.title),
+				statusBadge("人工已确认", "confirmed"),
+				element("p", task.review.outcome || "尚未填写结果。"),
+			);
+			if (task.review_focus?.updated_since_review)
+				row.append(
+					element("p", "原结论之后有新草稿，新增内容仍待核对。", "hint"),
+				);
+			row.append(
+				this.button("查看记录", () => this.openReview(task), false, "quiet"),
+			);
+			$("overview-outcomes").append(row);
+		}
+		if (!confirmed.length)
+			$("overview-outcomes").append(
+				element("p", "尚无人工确认成果。草稿不会自动计入。", "hint"),
+			);
+		if (confirmed.length > 3)
+			$("overview-outcomes").append(
+				this.button(
+					`查看全部 ${confirmed.length} 条成果`,
+					() => showView(document.querySelector('[data-view="tasks"]')),
+					false,
+					"quiet",
+				),
+			);
+		const ongoing = tasks.filter(
+			(task) =>
+				task.review?.status === "in_progress" && !actionable.includes(task),
+		);
+		if (ongoing.length) {
+			const details = element("details", undefined, "ongoing-work");
+			details.append(element("summary", `进行中的工作 · ${ongoing.length}`));
+			for (const task of ongoing) {
+				const row = element("div", undefined, "outcome-row");
+				row.append(
+					element("strong", task.title),
+					statusBadge("进行中", "in_progress"),
+					this.button("继续记录", () => this.openReview(task), false, "quiet"),
+				);
+				details.append(row);
+			}
+			$("task-focus").append(details);
+		}
+		const needsReview = tasks.filter(
+			(task) => task.review_focus?.needs_review,
+		).length;
+		$("overview-needs-review").textContent = number(needsReview);
+		$("overview-blocked").textContent = number(
+			tasks.filter((task) => task.review?.status === "blocked").length,
+		);
+		$("open-tasks").textContent = needsReview
+			? `核对 ${needsReview} 项工作`
+			: "开始整理";
 		const assigned = new Set(tasks.flatMap((task) => task.sessions));
 		const untriaged = (this.current?.sessions || []).filter(
-			(session) => !assigned.has(session.session),
+			(session) => !assigned.has(session.session) && !session.deferred,
 		);
-		$("overview-tasks").textContent = number(tasks.length);
+		$("overview-tasks").textContent = number(this.totalTasks ?? tasks.length);
+		const limited = this.totalTasks > tasks.length;
+		$("overview-record-scope").classList.toggle("hidden", !limited);
+		$("overview-record-scope").textContent = limited
+			? `当前载入 ${tasks.length}/${this.totalTasks} 条记录。下方状态计数与队列只覆盖已载入部分，不代表全天完整结果。`
+			: "";
 		$("overview-confirmed").textContent = number(
 			tasks.filter((task) => task.review?.status === "confirmed").length,
 		);
 		$("overview-untriaged").textContent = number(untriaged.length);
 		if (untriaged.length) {
-			$("task-focus").append(element("h3", `待整理会话 · ${untriaged.length}`));
+			const heading = element("h3", `待整理会话 · ${untriaged.length}`);
+			heading.id = "inbox-heading";
+			$("task-focus").append(heading);
 			for (const session of untriaged.slice(0, 5)) {
 				const row = element("div", undefined, "focus-row");
 				const head = element("div", undefined, "section-head");
 				head.append(element("strong", sessionName(session)));
 				const actions = element("div", undefined, "task-actions");
+				const more = element("details", undefined, "session-more");
+				more.append(
+					element("summary", "更多"),
+					this.button("改名", () => renameSession(session), false, "quiet"),
+					this.button(
+						"暂不整理",
+						() => this.deferSession(session, true),
+						false,
+						"quiet",
+					),
+				);
 				actions.append(
-					this.button("改名", () => renameSession(session)),
-					this.button("生成总结", () => this.quickSummary(session)),
+					this.button(
+						"生成总结",
+						() => this.quickSummary(session),
+						false,
+						"ai",
+					),
+					more,
 				);
 				head.append(actions);
 				row.append(
@@ -196,6 +685,33 @@ class TaskBoard {
 				);
 				$("task-focus").append(row);
 			}
+		}
+		if (untriaged.length > 5)
+			$("task-focus").append(
+				this.button(`整理全部 ${untriaged.length} 个会话`, () =>
+					showView(document.querySelector('[data-view="tasks"]')),
+				),
+			);
+		const deferred = (this.current?.sessions || []).filter(
+			(session) => session.deferred && !assigned.has(session.session),
+		);
+		if (deferred.length) {
+			const details = element("details", undefined, "deferred-sessions");
+			details.append(
+				element(
+					"summary",
+					`暂不整理 · ${deferred.length}（可恢复，有新活动会重新提醒）`,
+				),
+			);
+			for (const session of deferred) {
+				const row = element("div", undefined, "focus-row");
+				row.append(
+					element("span", sessionName(session)),
+					this.button("恢复待整理", () => this.deferSession(session, false)),
+				);
+				details.append(row);
+			}
+			$("task-focus").append(details);
 		}
 	}
 	async quickSummary(session) {
@@ -212,6 +728,7 @@ class TaskBoard {
 			)
 		)
 			return;
+		rememberLocation();
 		this.quickPending.add(session.session);
 		try {
 			let task = this.tasks.find(
@@ -241,6 +758,7 @@ class TaskBoard {
 			$("summary-notice").textContent =
 				"总结已排队，完成后自动显示在工作总结中。";
 			await this.refresh();
+			$("summary-panel").open = true;
 			$("summary-panel").scrollIntoView({ block: "start" });
 		} catch (error) {
 			await this.refresh();
@@ -250,34 +768,72 @@ class TaskBoard {
 		}
 	}
 	async create() {
-		try {
-			const sessions = [
+		if (this.creating || !this.current) return;
+		const day = this.current.date;
+		const submitted = {
+			title: $("task-title").value,
+			start: $("task-start").value,
+			sessions: [
 				...document.querySelectorAll("#task-sessions input:checked"),
-			].map((el) => el.value);
-			const response = await api("/api/tasks", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
+			].map((input) => input.value),
+		};
+		const unchanged = (draft) =>
+			draft &&
+			draft.title === submitted.title &&
+			draft.start === submitted.start &&
+			JSON.stringify([...draft.sessions].sort()) ===
+				JSON.stringify([...submitted.sessions].sort());
+		this.creating = true;
+		$("task-create").disabled = true;
+		try {
+			const created = await (
+				await api("/api/tasks", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						title: submitted.title,
+						sessions: submitted.sessions,
+						date: day,
+						start_time: submitted.start,
+					}),
+				})
+			).json();
+			this.selectedByDay.set(day, created.id);
+			if (unchanged(this.creationByDay.get(day)))
+				this.creationByDay.delete(day);
+			if (this.current.date === day) {
+				const clear = unchanged({
 					title: $("task-title").value,
-					sessions,
-					date: this.current.date,
-					start_time: $("task-start").value,
-				}),
-			});
-			if (response.ok) {
+					start: $("task-start").value,
+					sessions: [
+						...document.querySelectorAll("#task-sessions input:checked"),
+					].map((input) => input.value),
+				});
+				if (clear) {
+					$("task-title").value = "";
+					for (const input of document.querySelectorAll("#task-sessions input"))
+						input.checked = false;
+					this.setCreationOpen(false);
+				}
+				this.taskFilter = "all";
+				$("task-search").value = "";
+				this.selectedTaskId = created.id;
 				this.notice(
-					sessions.length
-						? "任务已创建，可先预览材料并填写人工审阅。"
-						: "手动任务已创建，请填写工作结果与验证方式。",
+					clear
+						? "记录已创建，可在右侧核对结果；也可先预览材料。"
+						: "记录已创建；提交之后的新文字仍保留在新建表单中，尚未提交。",
 				);
 				await this.refresh();
-			}
+			} else this.notice(`已在 ${day} 创建记录，当前日期未改变。`);
 		} catch (error) {
 			this.notice(error.message);
+		} finally {
+			this.creating = false;
+			$("task-create").disabled = !this.enabled;
 		}
 	}
-	button(text, action, disabled = false) {
-		const button = element("button", text);
+	button(text, action, disabled = false, kind = "secondary") {
+		const button = element("button", text, `button-${kind}`);
 		button.type = "button";
 		button.disabled = disabled;
 		button.addEventListener("click", async () => {
@@ -295,10 +851,9 @@ class TaskBoard {
 		const header = element("div", undefined, "section-head");
 		header.append(
 			element("h3", task.title),
-			element(
-				"span",
+			statusBadge(
 				task.status === "completed" ? "用户已结束（非验收）" : "任务进行中",
-				"badge",
+				task.status === "completed" ? "pending" : "in_progress",
 			),
 		);
 		box.append(
@@ -309,6 +864,26 @@ class TaskBoard {
 				"hint",
 			),
 		);
+		if (task.review_focus?.issues.length) {
+			const focus = element("details", undefined, "review-focus");
+			focus.open = task.review_focus.needs_review;
+			focus.append(
+				element(
+					"summary",
+					`${task.review_focus.needs_review ? "本次审阅重点" : "已记录的关注事项"} · ${task.review_focus.issue_count}`,
+				),
+			);
+			const list = element("ul");
+			for (const issue of task.review_focus.issues)
+				list.append(
+					element(
+						"li",
+						`${issue.text}${issue.detail ? `：${issue.detail}` : ""}`,
+					),
+				);
+			focus.append(list);
+			box.append(focus);
+		}
 		const actions = element("div", undefined, "task-actions");
 		const summary = task.summary;
 		const busy = summary && ["queued", "running"].includes(summary.status);
@@ -316,10 +891,20 @@ class TaskBoard {
 			actions.append(this.button("预览当前材料", () => this.preview(task.id)));
 		if (this.llmEnabled && task.sessions.length && task.status === "open") {
 			actions.append(
-				this.button("阶段总结", () => this.summarize(task, "stage"), busy),
+				this.button(
+					"阶段总结",
+					() => this.summarize(task, "stage"),
+					busy,
+					"ai",
+				),
 			);
 			actions.append(
-				this.button("结束并总结", () => this.summarize(task, "final"), busy),
+				this.button(
+					"结束并总结",
+					() => this.summarize(task, "final"),
+					busy,
+					"ai",
+				),
 			);
 		}
 		if (
@@ -328,7 +913,12 @@ class TaskBoard {
 			["error", "interrupted"].includes(summary.status)
 		) {
 			actions.append(
-				this.button("重试总结", () => this.summarize(task, summary.mode, true)),
+				this.button(
+					"重试总结",
+					() => this.summarize(task, summary.mode, true),
+					false,
+					"ai",
+				),
 			);
 		}
 		if (this.llmEnabled && task.saved_summary_quality?.needs_regeneration)
@@ -342,11 +932,20 @@ class TaskBoard {
 							true,
 						),
 					busy,
+					"ai",
 				),
 			);
-		if (summary)
+		if (task.saved_summary_job_id)
 			actions.append(
-				this.button("查看本次证据", () => this.preview(task.id, summary.id)),
+				this.button("核对草稿原文", () =>
+					this.preview(task.id, task.saved_summary_job_id),
+				),
+			);
+		if (summary && summary.id !== task.saved_summary_job_id)
+			actions.append(
+				this.button("查看最新请求证据", () =>
+					this.preview(task.id, summary.id),
+				),
 			);
 		box.append(actions);
 		if (summary) {
@@ -387,19 +986,28 @@ class TaskBoard {
 						),
 					);
 				} else {
-					box.append(element("p", result.overview.text));
-					renderBusinessWork(result, box);
+					const reference = element("details", undefined, "task-ai-reference");
+					reference.append(
+						element(
+							"summary",
+							`AI 草稿与过程依据 · ${result.work_items?.length || 0} 项工作`,
+							"task-reference-toggle",
+						),
+						element("p", result.overview.text),
+					);
+					renderBusinessWork(result, reference);
+					box.append(reference);
 				}
 			}
 		}
 		box.append(this.reviewForm(task));
-		$("task-list").append(box);
+		return box;
 	}
 	reviewForm(task) {
 		const form = element("div", undefined, "review-form");
 		const draft = this.drafts.get(task.id) || task.review || {};
 		form.append(element("h4", "人工审阅与修订"));
-		const statusLabel = element("label", "任务状态");
+		const statusLabel = element("label", "任务状态", "review-field-status");
 		const status = element("select", undefined, "review-status");
 		for (const [value, label] of [
 			["in_progress", "进行中"],
@@ -412,22 +1020,29 @@ class TaskBoard {
 		}
 		status.value = draft.status || "in_progress";
 		statusLabel.append(status);
-		form.append(statusLabel);
 		const fields = {};
+		const wrappers = {};
 		for (const [key, label, cls] of [
 			["outcome", "工作结果", "review-outcome"],
-			["learnings", "经验收获", "review-learnings"],
+			["learnings", "经验收获（可选）", "review-learnings"],
 			["verification", "验证方式或验收依据", "review-verification"],
 			["next_steps", "下一步", "review-next"],
 		]) {
-			const wrapper = element("label", label);
+			const wrapper = element("label", label, `review-field-${key}`);
 			const input = element("textarea", undefined, cls);
 			input.maxLength = 2000;
 			input.value = draft[key] || "";
 			wrapper.append(input);
-			form.append(wrapper);
+			wrappers[key] = wrapper;
 			fields[key] = input;
 		}
+		form.append(
+			wrappers.outcome,
+			statusLabel,
+			wrappers.verification,
+			wrappers.next_steps,
+			wrappers.learnings,
+		);
 		if (this.commits.length) {
 			form.append(
 				element("p", "关联 Git 提交（人工选择；提交不代表测试通过）", "hint"),
@@ -450,7 +1065,16 @@ class TaskBoard {
 				form.append(label);
 			}
 		}
-		const capture = () =>
+		const feedback = element(
+			"p",
+			this.drafts.has(task.id) ? "有未保存修订" : "",
+			"review-feedback hint",
+		);
+		feedback.setAttribute("role", "status");
+		const capture = (event) => {
+			if (event?.target?.classList.contains("review-draft-item")) return;
+			if (feedback.textContent !== "有未保存修订")
+				feedback.textContent = "有未保存修订";
 			this.drafts.set(task.id, {
 				status: status.value,
 				outcome: fields.outcome.value,
@@ -461,29 +1085,195 @@ class TaskBoard {
 					...form.querySelectorAll(".commit-choice input:checked"),
 				].map((check) => check.value),
 			});
+		};
 		form.addEventListener("input", capture);
 		form.addEventListener("change", capture);
-		const save = this.button("保存人工审阅", async () => {
-			capture();
-			await api("/api/task-review", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ task_id: task.id, ...this.drafts.get(task.id) }),
+		const result = task.saved_summary;
+		if (result?.work_items?.length && task.saved_summary_quality?.ready) {
+			const controls = element("div", undefined, "review-draft-controls");
+			const selection = element("select", undefined, "review-draft-item");
+			selection.setAttribute("aria-label", "带入草稿的工作范围");
+			for (const [value, label] of [
+				["all", "全部工作项"],
+				...result.work_items.map((item, index) => [String(index), item.title]),
+			]) {
+				const option = element("option", label);
+				option.value = value;
+				selection.append(option);
+			}
+			const adopt = this.button("从 AI 草稿带入", () => {
+				const groups =
+					selection.value === "all"
+						? result.work_items
+						: [result.work_items[Number(selection.value)]];
+				const labels = {
+					reported_resolved: "助手报告已解决，待核验",
+					blocked: "存在阻塞",
+					in_progress: "进行中",
+					discussed: "仅讨论，未证明实施",
+				};
+				const next = {
+					outcome: groups
+						.map(
+							(item) =>
+								`【${item.title}｜${labels[item.status]}】\n${item.outcome?.text || item.actions.map((action) => action.text).join("；") || item.problem.text}`,
+						)
+						.join("\n\n"),
+					verification: groups
+						.map(
+							(item) =>
+								`${item.title}：${item.verification?.text || "未提供验证证据，不能推断测试通过。"}`,
+						)
+						.join("\n"),
+					next_steps: groups
+						.flatMap((item) =>
+							item.remaining.map(
+								(remaining) => `${item.title}：${remaining.text}`,
+							),
+						)
+						.join("\n"),
+				};
+				if (Object.values(next).some((text) => text.length > 2000)) {
+					feedback.textContent =
+						"合并内容超过表单长度限制。请选择单个工作项带入，避免静默截断结果或阻塞。";
+					return;
+				}
+				if (
+					["outcome", "verification", "next_steps"].some((key) =>
+						fields[key].value.trim(),
+					) &&
+					!confirm(
+						"替换当前工作结果、验证与下一步？原保存记录不会立即改变，经验和提交关联保留；状态将回到进行中。",
+					)
+				)
+					return;
+				for (const [key, text] of Object.entries(next))
+					fields[key].value = text;
+				status.value = "in_progress";
+				capture();
+				feedback.textContent = "已带入，尚未保存；请核对后选择状态。";
+				fields.outcome.focus();
 			});
-			this.drafts.delete(task.id);
-			this.notice("人工审阅已保存，报告将使用这一结论。");
-			await this.refresh();
+			adopt.classList.add("review-adopt", "button-ai");
+			controls.append(
+				selection,
+				adopt,
+				element("small", "只填表，不调用模型，不自动确认。", "hint"),
+			);
+			form.insertBefore(controls, wrappers.outcome);
+		}
+		form.append(feedback);
+		const save = this.button("保存人工审阅", async () => {
+			if (this.savingReviews.has(task.id)) return;
+			capture();
+			const submitted = this.drafts.get(task.id);
+			this.savingReviews.add(task.id);
+			let saved = false;
+			save.disabled = true;
+			try {
+				await api("/api/task-review", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ task_id: task.id, ...submitted }),
+				});
+				saved = true;
+				if (this.drafts.get(task.id) === submitted) this.drafts.delete(task.id);
+				this.notice(
+					`已保存 ${task.day} · ${task.title} 的人工审阅；报告使用已保存内容，新输入仍需另存。`,
+				);
+				feedback.textContent = this.drafts.has(task.id)
+					? "上次提交已保存，之后的新修改仍未保存。"
+					: "已保存。";
+				save.blur();
+				await this.refresh();
+			} finally {
+				this.savingReviews.delete(task.id);
+				save.disabled = false;
+				const currentCard = $(`task-${task.id}`);
+				const currentSave = currentCard?.querySelector(".review-save");
+				if (currentSave) currentSave.disabled = false;
+				const currentFeedback = currentCard?.querySelector(".review-feedback");
+				if (currentFeedback)
+					currentFeedback.textContent = !saved
+						? "保存未完成，修订仍保留，请重试。"
+						: this.drafts.has(task.id)
+							? "上次提交已保存，后续新文字仍未保存。"
+							: "已保存。";
+			}
 		});
+		save.disabled = this.savingReviews.has(task.id);
 		save.classList.add("review-save", "primary");
-		form.append(save);
+		const footer = element("div", undefined, "review-footer");
+		footer.append(save);
+		const discard = this.button("撤销未保存修订", () => {
+			if (this.savingReviews.has(task.id))
+				return this.notice(
+					"保存请求正在处理，不能撤回已提交内容。可继续输入，完成后再处理后续修订。",
+				);
+			if (this.lastReadError)
+				return this.notice(
+					"列表刷新失败，请先刷新确认最新保存内容，再撤销修订。",
+				);
+			if (!this.drafts.has(task.id)) return;
+			if (
+				!confirm(
+					"撤销本次未保存的文字和状态修改？已保存记录与 AI 草稿不会删除。",
+				)
+			)
+				return;
+			const currentTask =
+				this.tasks?.find((item) => item.id === task.id) || task;
+			const saved = currentTask.review || {};
+			for (const [key, input] of Object.entries(fields))
+				input.value = saved[key] || "";
+			status.value = saved.status || "in_progress";
+			for (const check of form.querySelectorAll(".commit-choice input"))
+				check.checked = currentTask.commit_ids.includes(check.value);
+			this.drafts.delete(task.id);
+			feedback.textContent = "已恢复为上次保存的内容。";
+			this.notice("已撤销未保存修订，已保存的工作记录未删除。");
+			this.reconcileTasks(this.tasks || []);
+		});
+		discard.classList.add("review-discard");
+		footer.append(discard, feedback);
+		form.insertBefore(footer, wrappers.outcome);
 		return form;
 	}
+	closePreview(restore = true) {
+		this.previewSerial++;
+		for (const id of [
+			"task-preview-close",
+			"task-evidence-summary",
+			"task-preview-details",
+			"task-preview",
+		])
+			$(id).classList.add("hidden");
+		$("task-evidence-summary").replaceChildren();
+		$("task-preview").textContent = "";
+		$("task-preview-details").open = false;
+		if (restore && this.previewReturn) {
+			const target = this.previewReturn;
+			requestAnimationFrame(() => {
+				if (target.focus?.isConnected)
+					target.focus.focus({ preventScroll: true });
+				window.scrollTo(0, target.y);
+			});
+		}
+		this.previewReturn = null;
+		updateBackButton();
+	}
 	async preview(id, job) {
+		const serial = ++this.previewSerial;
+		const day = this.current.date;
+		const target = { y: window.scrollY, focus: document.activeElement };
 		const value = await (
 			await api(
 				`/api/task-preview?id=${encodeURIComponent(id)}${job ? `&job=${encodeURIComponent(job)}` : ""}`,
 			)
 		).json();
+		if (serial !== this.previewSerial || day !== this.current.date) return;
+		this.previewReturn = target;
+		$("task-preview-close").classList.remove("hidden");
 		$("task-preview").classList.remove("hidden");
 		$("task-preview-details").classList.remove("hidden");
 		$("task-preview").textContent = JSON.stringify(value, null, 2);
@@ -513,6 +1303,8 @@ class TaskBoard {
 		this.notice(
 			"这是限定范围的脱敏快照；脱敏不保证识别全部敏感信息。自动模式按启动授权执行。",
 		);
+		updateBackButton();
+		$("task-preview-close").scrollIntoView({ block: "start" });
 	}
 	async summarize(task, mode, retry = false) {
 		if (!this.llmEnabled || !this.allowExcerpts) {

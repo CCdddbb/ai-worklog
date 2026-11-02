@@ -73,6 +73,13 @@ class WebTests(unittest.TestCase):
         self.assertNotIn(str(self.db), json.dumps(value))
         self.assertIn('本日期没有已导入', self.get('/api/report')[2].decode())
 
+    def test_workbench_styles_are_local_public_assets_without_private_data(self):
+        status, headers, body = self.get('/workbench.css', auth=False)
+        self.assertEqual(status, 200)
+        self.assertIn('text/css', headers['Content-Type'])
+        self.assertIn('button.button-ai', body.decode())
+        self.assertNotIn(str(self.db), body.decode())
+
     def test_frontend_uses_text_nodes_and_no_third_party_scripts(self):
         script = (ROOT / 'static/app.js').read_text()
         self.assertNotIn('innerHTML', script)

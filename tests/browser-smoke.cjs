@@ -47,6 +47,8 @@ const child = spawn(
 	},
 );
 let browser;
+let page;
+const httpFailures = [];
 async function main() {
 	let output = "";
 	const url = await new Promise((resolve, reject) => {
@@ -71,12 +73,24 @@ async function main() {
 	});
 	const base = new URL(url).origin;
 	browser = await chromium.launch({ channel: "chrome", headless: true });
-	const page = await browser.newPage({
+	page = await browser.newPage({
 		viewport: { width: 1440, height: 1050 },
 	});
 	const external = [];
 	const errors = [];
+	let summaryRequests = 0;
+	page.on("request", (request) => {
+		if (request.method() === "POST" && request.url().endsWith("/api/summarize"))
+			summaryRequests++;
+	});
 	page.on("pageerror", (error) => errors.push(error.message));
+	page.on("response", (response) => {
+		if (response.status() >= 400)
+			httpFailures.push({
+				path: new URL(response.url()).pathname,
+				status: response.status(),
+			});
+	});
 	await page.route("**/*", (route) => {
 		if (!route.request().url().startsWith(`${base}/`)) {
 			external.push("unexpected external request");
@@ -94,6 +108,19 @@ async function main() {
 	);
 	assert.equal(await page.locator("#overview-confirmed").textContent(), "0");
 	assert.equal(await page.locator("#overview-untriaged").textContent(), "2");
+	await page.locator(".session-more > summary").first().click();
+	await page
+		.getByRole("button", { name: "暂不整理", exact: true })
+		.first()
+		.click();
+	await page.waitForFunction(
+		() => document.querySelector("#overview-untriaged").textContent === "1",
+	);
+	await page.locator(".deferred-sessions summary").click();
+	await page.getByRole("button", { name: "恢复待整理", exact: true }).click();
+	await page.waitForFunction(
+		() => document.querySelector("#overview-untriaged").textContent === "2",
+	);
 	assert.equal(
 		await page.locator("[data-view=overview]").getAttribute("aria-current"),
 		"page",
@@ -106,6 +133,7 @@ async function main() {
 		await page.locator("#summary-content").textContent(),
 		/暂无已保存的总结/,
 	);
+	await page.locator(".session-more > summary").first().click();
 	page.once("dialog", (dialog) => dialog.accept("认证回调排查"));
 	await page
 		.locator(".focus-row")
@@ -176,6 +204,7 @@ async function main() {
 		await page.waitForFunction(
 			() => !document.querySelector("#task-create").disabled,
 		);
+		await page.locator("#task-new").click();
 		await page.locator("#task-title").fill("虚构跨会话配置排查");
 		for (const check of await page.locator("#task-sessions input").all())
 			await check.check();
@@ -188,12 +217,46 @@ async function main() {
 				.querySelector("#task-preview")
 				.textContent.includes("selected_events"),
 		);
+		await page.locator("#task-preview-close").click();
+		assert.equal(
+			await page.locator("#task-evidence-summary").isVisible(),
+			false,
+		);
+		await page
+			.getByRole("button", { name: "预览当前材料", exact: true })
+			.click();
+		await page.locator("#task-preview-close").waitFor();
+		await page.locator("#navigate-back").click();
+		assert.equal(await page.locator("#tasks").isVisible(), true);
+		assert.equal(await page.locator("#task-preview-close").isVisible(), false);
 		page.once("dialog", (dialog) => dialog.accept());
 		await page.getByRole("button", { name: "结束并总结", exact: true }).click();
 		await page.waitForFunction(() =>
 			document.querySelector("#task-list").textContent.includes("AI草稿已生成"),
 		);
 		assert.match(await page.locator("#task-list").textContent(), /用户已结束/);
+		const beforeAdopt = summaryRequests;
+		await page.locator(".review-adopt").first().click();
+		assert.equal(summaryRequests, beforeAdopt);
+		assert.match(
+			await page.locator(".review-outcome").first().inputValue(),
+			/虚构测试/,
+		);
+		assert.equal(
+			await page.locator(".review-status").first().inputValue(),
+			"in_progress",
+		);
+		assert.equal(
+			await page.evaluate(() => window.worklogTasks.tasks[0].review),
+			null,
+		);
+		page.once("dialog", (dialog) => dialog.accept());
+		await page.locator(".review-discard").first().click();
+		assert.equal(
+			await page.locator(".review-outcome").first().inputValue(),
+			"",
+		);
+		await page.locator(".review-adopt").first().click();
 		await page.locator(".review-status").first().selectOption("confirmed");
 		await page
 			.locator(".review-outcome")
@@ -204,19 +267,84 @@ async function main() {
 			.first()
 			.fill("先明确输入边界再验证");
 		await page.locator(".review-verification").first().fill("本地测试通过");
+		await page.locator(".review-outcome").first().focus();
+		await page.evaluate(async () => {
+			const field = document.querySelector(".review-outcome");
+			field.setSelectionRange(2, 4);
+			await window.worklogTasks.refresh();
+			if (
+				field !== document.activeElement ||
+				field.selectionStart !== 2 ||
+				field.selectionEnd !== 4
+			)
+				throw new Error("Background refresh interrupted editing");
+		});
+		const beforeSettingsY = await page.evaluate(() => {
+			const y = scrollY;
+			openSummarySettings();
+			return y;
+		});
+		assert.equal(await page.locator("#overview").isVisible(), true);
+		await page.locator("#navigate-back").click();
+		await page.waitForFunction(
+			(y) => Math.abs(scrollY - y) < 3,
+			beforeSettingsY,
+		);
+		assert.equal(await page.locator("#tasks").isVisible(), true);
+		assert.equal(
+			await page.locator(".review-outcome").first().inputValue(),
+			"已核对登录回调的处理结果",
+		);
+		await page.locator("#date").fill("2026-10-27");
+		await page.locator("#date").dispatchEvent("change");
+		await page.waitForFunction(
+			() => document.querySelectorAll("#task-list .task-card").length === 0,
+		);
+		await page.locator("#date").fill("2026-10-28");
+		await page.locator("#date").dispatchEvent("change");
+		await page.locator(".review-outcome").first().waitFor();
 		await page.locator("#refresh").click();
 		await page.waitForTimeout(200);
 		assert.equal(
 			await page.locator(".review-outcome").first().inputValue(),
 			"已核对登录回调的处理结果",
 		);
+		let releaseSave;
+		const saveGate = new Promise((resolve) => {
+			releaseSave = resolve;
+		});
+		const delayedSave = async (route) => {
+			await saveGate;
+			await route.continue();
+		};
+		await page.route("**/api/task-review", delayedSave);
+		const pendingSave = page.waitForRequest((request) =>
+			request.url().endsWith("/api/task-review"),
+		);
 		await page.locator(".review-save").first().click();
+		await pendingSave;
+		const newText = "已核对登录回调的处理结果；补充说明待核验";
+		await page.locator(".review-outcome").first().fill(newText);
+		releaseSave();
+		await page.waitForFunction(
+			() =>
+				window.worklogTasks.tasks[0].review?.outcome ===
+				"已核对登录回调的处理结果",
+		);
+		assert.equal(
+			await page.locator(".review-outcome").first().inputValue(),
+			newText,
+		);
+		assert.equal(await page.evaluate(() => window.worklogTasks.drafts.size), 1);
+		await page.unroute("**/api/task-review", delayedSave);
+		await page.locator(".review-save").first().click();
+		await page.waitForFunction(() => window.worklogTasks.drafts.size === 0);
 		await page.waitForFunction(
 			() => document.querySelector("#overview-confirmed").textContent === "1",
 		);
 		await page.locator("[data-view=overview]").click();
 		assert.match(
-			await page.locator("#task-focus").textContent(),
+			await page.locator("#overview-outcomes").textContent(),
 			/已核对登录回调/,
 		);
 		assert.equal(await page.locator("#overview-tasks").textContent(), "1");
@@ -252,11 +380,53 @@ async function main() {
 			fullPage: true,
 		});
 	}
+	await page.locator("[data-view=weekly]").click();
+	await page.waitForFunction(
+		() => document.querySelectorAll("#week-days > details").length === 7,
+	);
+	assert.equal(await page.locator("#week-work-chart button").count(), 7);
+	assert.equal(await page.locator("#week-usage-chart button").count(), 7);
+	assert.match(
+		await page.locator("#week-range").textContent(),
+		/2026-10-26.*2026-11-01/,
+	);
+	assert.match(await page.locator("#week-days").textContent(), /4,200 Token/);
+	await page.locator("#week-metric").selectOption("requests");
+	assert.match(
+		await page
+			.locator("#week-usage-chart button")
+			.nth(2)
+			.getAttribute("aria-label"),
+		/4 AI 回复/,
+	);
+	await page.screenshot({
+		path: path.join(screenshotDir, "weekly-desktop.png"),
+		fullPage: true,
+	});
+	await page.locator("#week-prev").click();
+	await page.waitForFunction(() =>
+		document.querySelector("#week-range").textContent.includes("2026-10-19"),
+	);
+	assert.match(await page.locator("#week-days").textContent(), /未记录/);
+	await page.locator("#week-next").click();
+	await page.waitForFunction(() =>
+		document.querySelector("#week-range").textContent.includes("2026-10-26"),
+	);
+	await page.locator("#week-usage-chart button").nth(2).click();
+	assert.equal(await page.locator("#overview").isVisible(), true);
+	assert.equal(await page.locator("#date").inputValue(), "2026-10-28");
 	await page.locator("[data-view=sources]").click();
 	assert.match(await page.locator("#coverage").textContent(), /synthetic/);
 	for (const width of [320, 390, 768, 1440]) {
 		await page.setViewportSize({ width, height: 900 });
-		for (const view of ["overview", "tasks", "report", "usage", "sources"]) {
+		for (const view of [
+			"overview",
+			"weekly",
+			"tasks",
+			"report",
+			"usage",
+			"sources",
+		]) {
 			await page.locator(`[data-view=${view}]`).click();
 			assert.equal(await page.locator(`#${view}`).isVisible(), true);
 			assert.equal(
@@ -278,6 +448,12 @@ async function main() {
 		path: path.join(screenshotDir, "dashboard-mobile.png"),
 		fullPage: true,
 	});
+	await page.locator("[data-view=weekly]").click();
+	await page.screenshot({
+		path: path.join(screenshotDir, "weekly-mobile.png"),
+		fullPage: true,
+	});
+	await page.locator("[data-view=overview]").click();
 	await page.locator("#open-tasks").click();
 	assert.equal(await page.locator("#heading").textContent(), "任务记录");
 	assert.deepEqual(errors, []);
@@ -287,8 +463,22 @@ async function main() {
 	);
 }
 main()
-	.catch((error) => {
-		console.error(error.message);
+	.catch(async (error) => {
+		console.error(error.stack || error.message);
+		console.error("HTTP failures:", JSON.stringify(httpFailures));
+		if (page && !page.isClosed())
+			console.error(
+				"UI state:",
+				await page
+					.evaluate(() => ({
+						view: document.querySelector("nav [aria-current=page]")?.dataset
+							.view,
+						date: document.querySelector("#date")?.value,
+						weekError: document.querySelector("#week-error")?.textContent,
+						status: document.querySelector("#status")?.textContent,
+					}))
+					.catch(() => null),
+			);
 		process.exitCode = 1;
 	})
 	.finally(async () => {

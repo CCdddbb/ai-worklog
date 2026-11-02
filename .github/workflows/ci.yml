@@ -31,4 +31,22 @@ jobs:
         run: |
           node --check static/app.js
           node --check static/tasks.js
+          node --check static/dashboard.js
+          node --check static/weekly.js
+          node --check static/reports.js
           node --check tests/browser-smoke.cjs
+          node --check tests/weekly-browser.cjs
+          node --check tests/report-browser.cjs
+          node --check tests/task-workspace-browser.cjs
+
+  macos-app:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build native macOS preview
+        run: |
+          ./bin/build-macos-app
+          codesign --verify --deep --strict "dist/AI Worklog.app"
+          test -z "$(find 'dist/AI Worklog.app/Contents/Resources' -type f \( -name '*.sqlite3' -o -name '*.key' -o -name '*.log' \))"
