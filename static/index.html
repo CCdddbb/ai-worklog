@@ -2,25 +2,23 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="本地运行的个人 AI 工作记录：核对结论、整理会话、生成工作报告。不录屏、不录音。">
-<meta name="theme-color" content="#f5f7fb">
-<title>AI Worklog · 个人工作台</title><link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="stylesheet" href="/tokens.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/workbench.css">
+<title>AI Worklog · 个人工作台</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/workbench.css">
 <script src="/app.js" defer></script><script src="/dashboard.js" defer></script><script src="/tasks.js" defer></script><script src="/weekly.js" defer></script><script src="/reports.js" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main-content">跳转到主要内容</a>
-<aside><div class="brand"><span class="logo">W</span><div>Worklog<small>个人工作记录</small></div></div><div class="workspace text-caption">工作空间</div>
+<aside><div class="brand"><span class="logo">W</span><div>Worklog<small>个人工作记录</small></div></div><div class="workspace">工作空间</div>
 <nav aria-label="主导航">
-<button type="button" class="active" data-view="overview" aria-current="page"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span><span>今日工作台</span></button>
-<button type="button" data-view="weekly"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="M8 14h3M8 17h6"/></svg></span><span>本周记录</span></button>
-<button type="button" data-view="tasks"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 5.5 1.5 1.5L7.5 4.5"/><path d="m3.5 11.5 1.5 1.5L7.5 10.5"/><path d="m3.5 17.5 1.5 1.5L7.5 16.5"/></svg></span><span>任务记录</span></button>
-<button type="button" data-view="report"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 12h6M9 16h6"/></svg></span><span>工作报告</span></button>
-<button type="button" data-view="usage"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></span><span>使用分析</span></button>
-<button type="button" data-view="sources"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg></span><span>数据与隐私</span></button>
+<button type="button" class="active" data-view="overview" aria-current="page"><span class="nav-icon" aria-hidden="true">◈</span><span>今日工作台</span></button>
+<button type="button" data-view="weekly"><span class="nav-icon" aria-hidden="true">▦</span><span>本周记录</span></button>
+<button type="button" data-view="tasks"><span class="nav-icon" aria-hidden="true">✧</span><span>任务记录</span></button>
+<button type="button" data-view="report"><span class="nav-icon" aria-hidden="true">▤</span><span>工作报告</span></button>
+<button type="button" data-view="usage"><span class="nav-icon" aria-hidden="true">◫</span><span>使用分析</span></button>
+<button type="button" data-view="sources"><span class="nav-icon" aria-hidden="true">◎</span><span>数据与隐私</span></button>
 </nav><div class="local"><span class="dot"></span> 本地运行 · 无遥测<small>不录屏 · 不录音 · 摘录按授权处理</small></div></aside>
 <main id="main-content" tabindex="-1">
 <div class="navigation-bar"><button type="button" id="navigate-back" class="button-quiet">← 返回工作台</button><span id="navigation-location" class="hint">今日工作台</span></div>
-<header><div><h1 id="heading">今日工作台</h1><p id="view-description" class="text-meta">先处理需要你关注的工作，再回看成果。</p></div>
+<header><div><h1 id="heading">今日工作台</h1><p id="view-description">先处理需要你关注的工作，再回看成果。</p></div>
 <div class="actions"><label id="date-control">查看日期<input type="date" id="date"></label><button type="button" id="refresh" class="button-quiet">刷新</button><label id="period-control" class="hidden">报告周期<select id="report-period"><option value="day">日报</option><option value="week">周报</option><option value="month">月报</option></select></label><button type="button" id="download" class="hidden">导出报告</button><button type="button" class="primary" id="open-tasks">开始整理</button></div></header>
 <div id="status" role="status">正在连接本地数据…</div>
 <section id="overview" class="view">
@@ -60,5 +58,5 @@
 </div></section>
 <section id="report" class="view hidden panel"><div class="section-head report-controls"><h2>成果优先的工作报告</h2><div class="task-actions"><label>报告版本<select id="report-detail"><option value="brief">精简交付版</option><option value="full">完整审阅版</option></select></label><label><input type="checkbox" id="report-focus-only">只看需关注项（不改变导出）</label><button type="button" id="report-print">打印 / 保存 PDF</button></div></div><p class="hint report-controls">先看成果、阻塞和下一步，再按需展开草稿与原文。</p><div id="report-preview" aria-live="polite"></div><details class="report-source report-controls"><summary>查看 Markdown 导出原文</summary><pre id="report-text"></pre></details></section>
 <section id="sources" class="view hidden panel"><h2>数据与隐私</h2><p>App 只读取本机默认或启动时选择的 Pi/Codex 会话目录，原文件只读；不录屏、不录音。本应用不复制登录凭据，模型调用由已登录的 CLI 处理。</p><p>默认保存匿名元数据，不保存完整正文。主题提取及 AI 摘录分别授权，脱敏不能保证识别全部商业秘密。源目录仅由启动配置决定，浏览器不能指定读取路径。</p><h3>最近导入覆盖</h3><pre id="coverage"></pre><h3>统计限制</h3><ul id="limitations"></ul><p class="hint">本地 SQLite 未加密。跨工具活动可能重复；未记录不等于没有工作。</p></section>
-<footer class="text-caption">Worklog · 本地工作记录 <span id="updated"></span></footer>
+<footer>Worklog · 本地工作记录 <span id="updated"></span></footer>
 </main></body></html>
