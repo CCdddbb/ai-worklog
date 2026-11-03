@@ -1,17 +1,16 @@
 /* Workbench visual system: action hierarchy and state semantics are separate. */
 :root {
-	--bg: #f5f7fb;
-	--ink: #19283b;
-	--muted: #59687b;
-	--accent: #3158d4;
-	--success-text: #166534;
-	--success-bg: #eaf7ef;
-	--warning-text: #92400e;
-	--warning-bg: #fff4df;
-	--draft-text: #6d28d9;
-	--draft-bg: #f3edff;
-	--progress-text: #1d4ed8;
-	--progress-bg: #eaf2ff;
+	--ink: #2b2723;
+	--muted: #7a7268;
+	--accent: #c2542a;
+	--success-text: #3d6149;
+	--success-bg: #e9f0e9;
+	--warning-text: #9a4a1e;
+	--warning-bg: #f7e8dc;
+	--draft-text: #6b5396;
+	--draft-bg: #efeaf6;
+	--progress-text: #2f5a8a;
+	--progress-bg: #e6edf5;
 }
 main {
 	padding-top: 24px;
@@ -39,30 +38,30 @@ header h1 {
 button.primary {
 	background: var(--accent);
 	border-color: var(--accent);
-	box-shadow: 0 2px 4px #3158d414;
+	box-shadow: 0 2px 4px #c2542a1f;
 }
 button.primary:hover {
-	background: #2446b3;
-	border-color: #2446b3;
+	background: #9a3f1e;
+	border-color: #9a3f1e;
 }
 button.button-ai {
 	background: var(--draft-bg);
 	color: var(--draft-text);
-	border-color: #d9c8fa;
+	border-color: #d8cce9;
 }
 button.button-ai:hover {
-	background: #e9ddff;
-	border-color: #bca2ef;
+	background: #e4dcf2;
+	border-color: #c2b3dd;
 }
 button.button-quiet {
 	background: transparent;
 	border-color: transparent;
-	color: #536278;
+	color: #6d655a;
 	box-shadow: none;
 }
 button.button-quiet:hover {
-	background: #eaf0f8;
-	color: #243b5a;
+	background: #f1ece3;
+	color: #4a4238;
 }
 .status-label,
 .badge {
@@ -97,22 +96,22 @@ button.button-quiet:hover {
 }
 .badge.status-pending,
 .status-label.status-pending {
-	color: #536278;
-	background: #edf1f5;
+	color: #6d655a;
+	background: #eeeae1;
 }
 .badge.status-error {
-	color: #b42318;
-	background: #fdecec;
+	color: #a83c28;
+	background: #fae7e0;
 }
 #week-error {
-	color: #b42318;
-	background: #fdecec;
-	border: 1px solid #f5c5c1;
+	color: #a83c28;
+	background: #fae7e0;
+	border: 1px solid #eccab8;
 	border-radius: 6px;
 	padding: 12px;
 }
 #status.error {
-	color: #b42318;
+	color: #a83c28;
 }
 .actionable-stats {
 	display: grid;
@@ -129,20 +128,60 @@ button.button-quiet:hover {
 	flex-direction: column;
 	padding: 16px 16px;
 	gap: 8px;
-	background: white;
+	background: var(--panel);
 	border: 1px solid var(--line);
+	border-top: 3px solid var(--kpi, var(--blue));
 	text-align: left;
 }
+#review-count-link {
+	--kpi: var(--plum);
+	--kpi-soft: #efeaf6;
+}
+#blocked-count-link {
+	--kpi: var(--accent);
+	--kpi-soft: #f6e7dd;
+}
+#inbox-count-link {
+	--kpi: var(--amber);
+	--kpi-soft: #f7efdd;
+}
+#outcome-count-link {
+	--kpi: var(--sage);
+	--kpi-soft: #e9f0e9;
+}
+.kpi-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	width: 100%;
+}
+.kpi-icon {
+	display: grid;
+	place-items: center;
+	width: 34px;
+	height: 34px;
+	border-radius: 8px;
+	background: var(--kpi-soft, #e6edf5);
+	color: var(--kpi, var(--blue));
+	flex: 0 0 auto;
+}
+.kpi-icon svg {
+	width: 18px;
+	height: 18px;
+}
 .overview-count strong {
-	font-size: 24px;
+	font-size: 28px;
 	line-height: 1.1;
 	color: var(--ink);
 	margin: 0;
+	font-variant-numeric: tabular-nums;
 }
 .overview-count:hover {
-	background: white;
-	border-color: #aebfdf;
-	box-shadow: 0 4px 12px #20375b0a;
+	background: var(--panel);
+	border-color: #c9a58f;
+	border-top-color: var(--kpi, var(--blue));
+	box-shadow: 0 4px 12px #2b27230a;
 }
 #overview .panel {
 	margin-bottom: 16px;
@@ -184,7 +223,7 @@ button.button-quiet:hover {
 	right: 0;
 	top: 100%;
 	min-width: 130px;
-	background: white;
+	background: var(--panel);
 	border: 1px solid var(--line);
 	z-index: 21;
 }
@@ -196,14 +235,14 @@ button.button-quiet:hover {
 	cursor: pointer;
 	padding: 8px 12px;
 	font-size: 12px;
-	color: #536278;
+	color: #6d655a;
 	border-radius: 6px;
 }
 .session-more > summary::-webkit-details-marker {
 	display: none;
 }
 .session-more > summary:hover {
-	background: #edf1f6;
+	background: #efeae0;
 }
 .session-more[open] {
 	z-index: 21;
@@ -211,7 +250,7 @@ button.button-quiet:hover {
 .session-more[open] > button {
 	display: block;
 	min-width: 115px;
-	background: white;
+	background: var(--panel);
 	border: 1px solid var(--line);
 	text-align: left;
 }
@@ -261,7 +300,7 @@ button.button-quiet:hover {
 }
 .progress-part.pending,
 .state-unreviewed {
-	background: #b49ae4;
+	background: #a08cc4;
 }
 .week-toolbar {
 	padding: 16px 16px;
@@ -296,15 +335,15 @@ button.button-quiet:hover {
 	padding: 16px 12px;
 	text-align: left;
 	min-width: 0;
-	background: #fbfcfe;
+	background: #faf7f2;
 }
 .week-day-card[aria-pressed="true"] {
 	border-color: var(--accent);
-	background: #f0f4ff;
+	background: #f9ede4;
 	box-shadow: inset 0 0 0 1px var(--accent);
 }
 .week-day-card:hover {
-	border-color: #9fb3dc;
+	border-color: #c9a58f;
 }
 .day-card-date {
 	font-size: 12px;
@@ -360,37 +399,37 @@ button.button-quiet:hover {
 	margin-top: 16px;
 }
 .trend-grid {
-	stroke: #e4eaf3;
+	stroke: #e5ded3;
 	stroke-width: 1;
 }
 .trend-label {
-	fill: #52637a;
+	fill: #7a7268;
 	font-size: 14px;
 }
 .trend-missing {
-	fill: #748397;
+	fill: #a89e90;
 	font-size: 14px;
 }
 .trend-line {
-	stroke: #5978dc;
+	stroke: #c2542a;
 	stroke-width: 2.5;
 	stroke-linejoin: round;
 }
 .trend-point {
-	fill: #5978dc;
+	fill: #c2542a;
 	stroke: white;
 	stroke-width: 2;
 	cursor: pointer;
 }
 .trend-point:hover,
 .trend-point:focus {
-	fill: #274cc1;
-	stroke: #c5d2f8;
+	fill: #9a3f1e;
+	stroke: #f0d9cb;
 	stroke-width: 4;
 	outline: none;
 }
 .trend-point.partial {
-	fill: #a55b12;
+	fill: #b8863b;
 }
 .trend-values {
 	display: grid;
@@ -577,9 +616,9 @@ button.button-quiet:hover {
 	min-height: 32px;
 }
 .task-filter[aria-pressed="true"] {
-	background: #edf2ff;
-	color: var(--accent);
-	border-color: #b8c8f0;
+	background: #f6e7dd;
+	color: var(--accent-ink);
+	border-color: #e0b9a3;
 }
 #task-index-items {
 	max-height: 62vh;
@@ -598,7 +637,7 @@ button.button-quiet:hover {
 }
 .task-list-item[aria-pressed="true"] {
 	border-color: var(--accent);
-	background: #f4f7ff;
+	background: #f9f1ea;
 }
 .task-item-title,
 .task-list-snippet {
@@ -644,7 +683,7 @@ button.button-quiet:hover {
 	align-items: center;
 	padding: 12px 0;
 	border-bottom: 1px solid var(--line);
-	background: #fafbfc;
+	background: #f8f5f0;
 	z-index: 3;
 }
 .review-footer .review-feedback {

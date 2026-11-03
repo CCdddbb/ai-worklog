@@ -323,11 +323,11 @@ class ReviewTests(unittest.TestCase):
         self.init()
         self.log()
         fake = self.root / 'pi-fixture'
-        fake.write_text('#!' + sys.executable + '\n'
-                        'import json, sys\n'
+        body = self.root / 'pi-fixture.py'
+        body.write_text('import json, sys\n'
                         'for flag in ["--no-tools", "--no-session", "--no-extensions", "--offline"]:\n'
                         '    assert flag in sys.argv\n'
-                        'assert "retry" in sys.argv[-1]\n'
+                        'assert "复盘" in sys.argv[-1]\n'
                         'data = json.load(sys.stdin)\n'
                         'item = {"text": "合成CLI任务，尚待核验", "evidence_ids": [data["evidence"][0]["id"]]}\n'
                         'result = {"schema_version": 2, "overview": item, "work_items": [{"title": "合成CLI配置任务", "problem": item, "actions": [item], "outcome": None, "verification": None, "remaining": [], "status": "in_progress"}]}\n'
@@ -335,6 +335,7 @@ class ReviewTests(unittest.TestCase):
                         '[{"type": "text", "text": json.dumps(result)}], "usage": {"input": 1}}\n'
                         'print(json.dumps({"type": "message_end", "message": message}))\n'
                         'print(json.dumps({"type": "agent_settled", "aborted": False}))\n')
+        fake.write_text('#!/bin/sh\nexec "' + sys.executable + '" "' + str(body) + '" "$@"\n')
         fake.chmod(0o700)
         with patch('worklog.llm.shutil.which', return_value=str(fake)), \
                 patch('sys.stdout', new_callable=io.StringIO) as output, \
