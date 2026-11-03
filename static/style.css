@@ -165,11 +165,10 @@ aside {
 	place-items: center;
 	width: 32px;
 	height: 32px;
+}
+.logo svg {
+	display: block;
 	border-radius: 8px;
-	background: var(--accent);
-	color: #fff;
-	font-size: 20px;
-	font-weight: 600;
 	box-shadow: 0 2px 8px #c2542a33;
 }
 .workspace {
