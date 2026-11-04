@@ -112,6 +112,8 @@ let browser;
 	}
 	await page.locator("#week-metric").selectOption("tokens");
 	assert.equal(await page.locator("#week-usage-chart svg").count(), 1);
+	assert.equal(await page.locator("#week-usage-chart svg text").count(), 0);
+	assert.match(await page.locator(".trend-caption").textContent(), /峰值/);
 	assert.equal(
 		await page
 			.locator('.trend-point[data-date="2026-10-29"]')

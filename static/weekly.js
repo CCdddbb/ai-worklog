@@ -157,42 +157,31 @@ class WeekBoard {
 			metric
 		];
 		const days = this.value.days;
-		const maximum = Math.max(
-			1,
-			...days
-				.filter((day) => day.recorded)
-				.map((day) => Number(day[metric]) || 0),
+		const values = days.map((day) =>
+			day.recorded ? Math.max(0, Number(day[metric]) || 0) : null,
 		);
+		const recorded = values.filter((value) => value !== null);
+		const maximum = Math.max(1, ...recorded);
+		const height = window.matchMedia("(max-width: 700px)").matches ? 240 : 130;
+		const top = 10;
+		const bottom = height - 10;
+		const span = bottom - top;
 		const svg = svgElement("svg", {
-			viewBox: "0 0 640 220",
+			viewBox: `0 0 640 ${height}`,
 			class: "usage-line-chart",
 			role: "img",
-			"aria-label": `本周 ${label} 趋势；未记录日期断开，非工时或成果`,
+			"aria-label": `本周 ${label} 趋势，峰值 ${number(maximum)}；未记录日期断开，非工时或成果`,
 		});
-		for (const [fraction, title] of [
-			[0, maximum],
-			[0.5, maximum / 2],
-			[1, 0],
-		]) {
-			const y = 20 + fraction * 150;
+		for (const fraction of [0, 0.5, 1]) {
+			const y = top + fraction * span;
 			svg.append(
 				svgElement("line", {
-					x1: 64,
+					x1: 8,
 					y1: y,
-					x2: 616,
+					x2: 632,
 					y2: y,
 					class: "trend-grid",
 				}),
-				svgElement(
-					"text",
-					{ x: 54, y: y + 4, "text-anchor": "end", class: "trend-label" },
-					title >= 10000
-						? new Intl.NumberFormat("zh-CN", {
-								notation: "compact",
-								maximumFractionDigits: 1,
-							}).format(title)
-						: number(title),
-				),
 			);
 		}
 		let segment = [];
@@ -209,27 +198,13 @@ class WeekBoard {
 		};
 		const points = [];
 		for (const [index, day] of days.entries()) {
-			const x = 64 + index * 92;
-			svg.append(
-				svgElement(
-					"text",
-					{ x, y: 198, "text-anchor": "middle", class: "trend-label" },
-					`周${weekNames[index]}`,
-				),
-			);
+			const x = 32 + index * 96;
 			if (!day.recorded) {
 				flush();
-				svg.append(
-					svgElement(
-						"text",
-						{ x, y: 176, "text-anchor": "middle", class: "trend-missing" },
-						"—",
-					),
-				);
 				continue;
 			}
-			const value = Math.max(0, Number(day[metric]) || 0);
-			const y = 170 - (value / maximum) * 150;
+			const value = values[index];
+			const y = bottom - (value / maximum) * span;
 			segment.push(`${x},${y}`);
 			const circle = svgElement("circle", {
 				cx: x,
@@ -276,7 +251,12 @@ class WeekBoard {
 			button.addEventListener("click", () => this.openDay(day.date));
 			legend.append(button);
 		}
-		$("week-usage-chart").replaceChildren(svg, legend);
+		const caption = element(
+			"p",
+			`峰值 ${number(maximum)} ${label} · ${recorded.length} 天有记录`,
+			"hint trend-caption",
+		);
+		$("week-usage-chart").replaceChildren(caption, svg, legend);
 	}
 	render() {
 		const value = this.value;

@@ -198,70 +198,90 @@ button.button-quiet:hover {
 #overview .panel {
 	margin-bottom: 16px;
 }
+.subsection-label {
+	margin: 24px 0 8px;
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+}
 .time-layout {
 	display: grid;
-	grid-template-columns: 200px minmax(0, 1fr);
+	grid-template-columns: 160px minmax(0, 1fr);
 	gap: 24px;
 	align-items: center;
-	margin-top: 16px;
+	max-width: 600px;
+	margin-top: 20px;
 }
-.time-pie {
-	display: grid;
-	place-items: center;
+.time-figure {
+	position: relative;
+	width: 160px;
+	height: 160px;
 }
 .time-donut {
 	display: block;
-	width: 100%;
-	max-width: 200px;
-	height: auto;
+	width: 160px;
+	height: 160px;
 }
 .time-donut-track {
 	fill: none;
 	stroke: var(--line);
-	stroke-width: 22;
+	stroke-width: 12;
 }
 .time-donut-segment {
 	fill: none;
-	stroke-width: 22;
+	stroke-width: 12;
 }
 .time-donut-segment:hover,
 .time-donut-segment:focus {
-	stroke-width: 28;
+	stroke-width: 16;
 	outline: none;
 }
-.time-donut-total {
-	fill: var(--ink);
-	font-size: 18px;
+.time-center {
+	position: absolute;
+	inset: 0;
+	display: grid;
+	place-content: center;
+	gap: 2px;
+	text-align: center;
+	pointer-events: none;
+}
+.time-center strong {
+	font-size: 16px;
+	line-height: 24px;
 	font-weight: 600;
 	font-variant-numeric: tabular-nums;
 }
-.time-donut-caption {
-	fill: var(--muted);
+.time-center span {
+	color: var(--muted);
 	font-size: 12px;
+	line-height: 16px;
 }
 .time-legend {
 	display: grid;
 	gap: 8px;
-	max-width: 480px;
 	margin: 0;
 	padding: 0;
 	list-style: none;
 }
 .time-legend-item {
 	display: grid;
-	grid-template-columns: 10px minmax(0, 1fr) auto;
+	grid-template-columns: 8px minmax(0, 1fr) auto;
 	align-items: center;
-	gap: 12px;
-	font-size: 14px;
-	line-height: 20px;
+	gap: 8px;
+	font-size: 12px;
+	line-height: 16px;
 }
 .time-swatch {
-	width: 10px;
-	height: 10px;
+	width: 8px;
+	height: 8px;
 	border-radius: 2px;
 }
 .time-legend-title {
-	overflow-wrap: anywhere;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 .time-legend-value {
 	color: var(--muted);
@@ -269,7 +289,7 @@ button.button-quiet:hover {
 	white-space: nowrap;
 }
 #time-note {
-	margin: 12px 0 0;
+	margin: 16px 0 0;
 }
 #task-focus {
 	scroll-margin-top: 72px;
@@ -529,29 +549,26 @@ button.button-quiet:hover {
 .week-scope > .scope-toggle {
 	cursor: pointer;
 }
+.trend-caption {
+	margin: 0 0 8px;
+}
 .usage-line-chart {
 	display: block;
 	width: 100%;
 	height: auto;
 	overflow: visible;
-	margin-top: 16px;
+	margin-top: 8px;
 }
 .trend-grid {
-	stroke: #e5ded3;
+	stroke: #e9e3d9;
 	stroke-width: 1;
-}
-.trend-label {
-	fill: #7a7268;
-	font-size: 14px;
-}
-.trend-missing {
-	fill: #a89e90;
-	font-size: 14px;
+	vector-effect: non-scaling-stroke;
 }
 .trend-line {
 	stroke: #c2542a;
-	stroke-width: 2.5;
+	stroke-width: 2;
 	stroke-linejoin: round;
+	vector-effect: non-scaling-stroke;
 }
 .trend-point {
 	fill: #c2542a;
@@ -572,24 +589,30 @@ button.button-quiet:hover {
 .trend-values {
 	display: grid;
 	grid-template-columns: repeat(7, minmax(0, 1fr));
-	gap: 4px;
-	margin-top: 6px;
+	gap: 2px;
+	margin-top: 8px;
 }
 .trend-value {
 	display: flex;
 	flex-direction: column;
-	gap: 4px;
+	gap: 2px;
 	align-items: center;
-	padding: 8px 1px;
+	padding: 6px 1px;
 	min-width: 0;
 	font-size: 12px;
+	line-height: 16px;
+	color: var(--muted);
 }
 .trend-value .trend-number {
 	font-size: 12px;
+	line-height: 16px;
+	font-weight: 600;
+	color: var(--ink);
 	overflow-wrap: anywhere;
 }
 .trend-value small {
 	font-size: 12px;
+	line-height: 16px;
 }
 .week-card-hint {
 	display: none;
@@ -613,11 +636,11 @@ button.button-quiet:hover {
 @media (max-width: 700px) {
 	.time-layout {
 		grid-template-columns: minmax(0, 1fr);
+		justify-items: center;
 		gap: 16px;
 	}
-	.time-pie {
-		max-width: 180px;
-		margin-inline: auto;
+	.time-legend {
+		width: 100%;
 	}
 	aside {
 		padding: 12px 16px 0;

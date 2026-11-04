@@ -167,35 +167,45 @@
 }
 .project-node {
 	padding: 16px;
-	margin-top: 16px;
+	margin-top: 12px;
 	border: 1px solid var(--line);
 	border-radius: 8px;
 }
 .project-node > summary {
-	font-size: 18px;
-	line-height: 28px;
+	font-size: 14px;
+	line-height: 20px;
 	font-weight: 600;
 }
 .conversation-node {
-	margin: 16px 0 0 16px;
+	margin: 12px 0 0 12px;
+	padding-left: 12px;
+	border-left: 1px solid var(--line);
 }
 .conversation-node > summary {
-	font-size: 16px;
-	line-height: 24px;
+	font-size: 14px;
+	line-height: 20px;
 	font-weight: 500;
 }
+.conversation-node > .hint {
+	margin: 4px 0 0;
+}
 .conversation-parts {
-	padding-inline-start: 24px;
-	margin: 8px 0;
+	margin: 4px 0 0;
+	padding: 0;
+	list-style: none;
 }
 .conversation-part {
-	padding: 12px 0;
+	padding: 8px 0;
 	font-size: 14px;
 	line-height: 20px;
 	overflow-wrap: anywhere;
 }
+.conversation-part .section-head strong {
+	font-size: 14px;
+	font-weight: 500;
+}
 .conversation-part > p {
-	margin: 8px 0;
+	margin: 6px 0;
 }
 .conversation-branch > summary {
 	cursor: pointer;

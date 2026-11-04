@@ -59,7 +59,7 @@ function renderTimeDistribution(value) {
 	panel.classList.toggle("hidden", total <= 0);
 	if (total <= 0) return;
 	$("time-total").textContent = workDuration(total);
-	const radius = 60;
+	const radius = 62;
 	const circumference = 2 * Math.PI * radius;
 	const svg = svgElement("svg", {
 		viewBox: "0 0 160 160",
@@ -75,9 +75,11 @@ function renderTimeDistribution(value) {
 			class: "time-donut-track",
 		}),
 	);
+	const gap = rows.length > 1 ? 2 : 0;
 	let offset = 0;
 	rows.forEach((row, index) => {
 		const length = (row.seconds / total) * circumference;
+		const visible = Math.max(0, length - gap);
 		const color = TIME_COLORS[index % TIME_COLORS.length];
 		svg.append(
 			svgElement("circle", {
@@ -87,8 +89,8 @@ function renderTimeDistribution(value) {
 				transform: "rotate(-90 80 80)",
 				class: "time-donut-segment",
 				stroke: color,
-				"stroke-dasharray": `${length} ${circumference - length}`,
-				"stroke-dashoffset": -offset,
+				"stroke-dasharray": `${visible} ${circumference - visible}`,
+				"stroke-dashoffset": -(offset + gap / 2),
 				tabindex: 0,
 				"aria-label": `${row.title} ${workDuration(row.seconds)}，占 ${timePercent(row.seconds, total)}%`,
 			}),
@@ -108,18 +110,6 @@ function renderTimeDistribution(value) {
 		);
 		$("time-legend").append(item);
 	});
-	svg.append(
-		svgElement(
-			"text",
-			{ x: 80, y: 76, "text-anchor": "middle", class: "time-donut-total" },
-			workDuration(total),
-		),
-		svgElement(
-			"text",
-			{ x: 80, y: 96, "text-anchor": "middle", class: "time-donut-caption" },
-			"活跃估计",
-		),
-	);
 	$("time-pie").append(svg);
 	const unattributed = Number(value.stats?.unattributed_seconds) || 0;
 	$("time-note").textContent =
