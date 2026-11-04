@@ -151,9 +151,9 @@ let browser;
 	assert.equal(
 		await page.evaluate(
 			() =>
-				[...document.querySelectorAll("button.primary")].filter(
-					(button) => button.getClientRects().length,
-				).length,
+				[
+					...document.querySelectorAll("button.primary, button.button-primary"),
+				].filter((button) => button.getClientRects().length).length,
 		),
 		1,
 	);
@@ -166,9 +166,9 @@ let browser;
 	assert.equal(
 		await page.evaluate(
 			() =>
-				[...document.querySelectorAll("button.primary")].filter(
-					(button) => button.getClientRects().length,
-				).length,
+				[
+					...document.querySelectorAll("button.primary, button.button-primary"),
+				].filter((button) => button.getClientRects().length).length,
 		),
 		1,
 	);

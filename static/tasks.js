@@ -1509,7 +1509,8 @@ class TaskBoard {
 					body: JSON.stringify({
 						task_id: task.id,
 						...submitted,
-						archive,
+						// 后端要求 archive 为布尔或缺省；普通保存传 null 会被拒收。
+						...(typeof archive === "boolean" ? { archive } : {}),
 					}),
 				});
 				ok = true;
@@ -1524,6 +1525,8 @@ class TaskBoard {
 				button.textContent = `${label} ✓`;
 				setFeedback(`${label} · ${clock(Date.now() / 1000)}`, "success");
 				this.notice(`${label}：${task.day} · ${task.title}`);
+				// 先退出保存态再刷新：否则重渲染出的保存按钮会带着旧的 saving 状态保持禁用。
+				this.savingReviews.delete(task.id);
 				await this.refresh();
 			} catch (error) {
 				setFeedback(`保存失败：${error.message}`, "error");
@@ -1531,6 +1534,9 @@ class TaskBoard {
 			} finally {
 				this.savingReviews.delete(task.id);
 				button.disabled = false;
+				// 焦点保护可能延迟重渲染；同步恢复当前卡片上的保存按钮，避免永久禁用。
+				const live = $(`task-${task.id}`)?.querySelector(".review-save");
+				if (live && live !== button) live.disabled = false;
 				if (ok)
 					setTimeout(() => {
 						if (button.isConnected) button.textContent = original;
