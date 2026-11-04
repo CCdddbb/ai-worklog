@@ -1,4 +1,5 @@
 """Private local metadata storage. Source sessions are never modified."""
+import hashlib
 import json
 import os
 import sqlite3
@@ -34,6 +35,27 @@ def connect(path):
         error_code TEXT, input INTEGER, output INTEGER, cache_read INTEGER,
         cache_write INTEGER, tokens INTEGER, cost REAL)''')
     db.execute('CREATE INDEX IF NOT EXISTS events_time ON events(ts)')
+    db.execute('CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY,name TEXT NOT NULL)')
+    db.execute('CREATE TABLE IF NOT EXISTS project_aliases (alias TEXT PRIMARY KEY,project TEXT NOT NULL)')
+    db.execute('''CREATE TABLE IF NOT EXISTS conversation_sources (
+        task_id TEXT PRIMARY KEY,session TEXT NOT NULL,day TEXT NOT NULL,UNIQUE(session,day))''')
+    db.execute('''CREATE TABLE IF NOT EXISTS conversations (
+        session TEXT PRIMARY KEY,project TEXT NOT NULL,title TEXT NOT NULL,
+        first_ts REAL NOT NULL,last_ts REAL NOT NULL)''')
+    db.execute('''CREATE TABLE IF NOT EXISTS conversation_parts (
+        id TEXT PRIMARY KEY,session TEXT NOT NULL,title TEXT NOT NULL,category TEXT NOT NULL,
+        status TEXT NOT NULL,group_json TEXT NOT NULL,first_ts REAL NOT NULL,last_ts REAL NOT NULL)''')
+    db.execute('''CREATE TABLE IF NOT EXISTS conversation_part_records (
+        part_id TEXT NOT NULL,record_id TEXT NOT NULL,PRIMARY KEY(part_id,record_id))''')
+    db.execute('''CREATE TABLE IF NOT EXISTS conversation_progress (
+        part_id TEXT NOT NULL,job_id TEXT NOT NULL,day TEXT NOT NULL,work_json TEXT NOT NULL,
+        recorded_at REAL NOT NULL,PRIMARY KEY(part_id,job_id))''')
+    db.execute('CREATE INDEX IF NOT EXISTS conversation_progress_day ON conversation_progress(day)')
+    db.execute('CREATE TABLE IF NOT EXISTS conversation_projection_jobs (job_id TEXT PRIMARY KEY)')
+    db.execute('CREATE TABLE IF NOT EXISTS local_migrations (name TEXT PRIMARY KEY)')
+    db.execute('CREATE TABLE IF NOT EXISTS legacy_shared_records (record_id TEXT PRIMARY KEY)')
+    db.execute('CREATE TABLE IF NOT EXISTS legacy_context_jobs (job_id TEXT PRIMARY KEY)')
+    db.execute('CREATE TABLE IF NOT EXISTS work_record_sessions (record_id TEXT,session TEXT,PRIMARY KEY(record_id,session))')
     db.execute('CREATE TABLE IF NOT EXISTS imports (source TEXT, imported_at TEXT, coverage TEXT)')
     db.execute('''CREATE TABLE IF NOT EXISTS import_days (
         source TEXT, day TEXT, zone TEXT, coverage TEXT,
@@ -76,6 +98,28 @@ def connect(path):
     db.execute('''CREATE TABLE IF NOT EXISTS session_triage (
         session TEXT, day TEXT, zone TEXT, digest TEXT NOT NULL, updated_at REAL NOT NULL,
         PRIMARY KEY(session,day,zone))''')
+    db.execute('''CREATE TABLE IF NOT EXISTS activity_revisions (
+        source TEXT, day TEXT, zone TEXT, digest TEXT NOT NULL, PRIMARY KEY(source,day,zone))''')
+    db.execute('''CREATE TABLE IF NOT EXISTS automation_scans (
+        day TEXT, zone TEXT, digest TEXT NOT NULL, PRIMARY KEY(day,zone))''')
+    db.execute('''CREATE TABLE IF NOT EXISTS automation_settings (
+        id INTEGER PRIMARY KEY CHECK(id=1), settings_json TEXT NOT NULL)''')
+    db.execute('''CREATE TABLE IF NOT EXISTS automatic_coverage (
+        task_id TEXT, event_id TEXT, digest TEXT NOT NULL, PRIMARY KEY(task_id,event_id))''')
+    db.execute('''CREATE TABLE IF NOT EXISTS task_automation (
+        task_id TEXT PRIMARY KEY, project TEXT NOT NULL, created_automatically INTEGER NOT NULL,
+        attempt_digest TEXT, last_error TEXT, updated_at REAL NOT NULL)''')
+    db.execute('''CREATE TABLE IF NOT EXISTS work_records (
+        id TEXT PRIMARY KEY, day TEXT NOT NULL, source_task_id TEXT NOT NULL, source_job_id TEXT NOT NULL,
+        title TEXT NOT NULL, category TEXT NOT NULL, category_override INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL, group_json TEXT NOT NULL, projects_json TEXT NOT NULL,
+        anchors_json TEXT NOT NULL, intervals_json TEXT NOT NULL,
+        first_ts REAL NOT NULL, last_ts REAL NOT NULL, active_seconds REAL NOT NULL,
+        archived_at REAL, created_at REAL NOT NULL, updated_at REAL NOT NULL)''')
+    db.execute('CREATE INDEX IF NOT EXISTS work_records_day ON work_records(day,category,status)')
+    db.execute('''CREATE TABLE IF NOT EXISTS work_record_history (
+        record_id TEXT, job_id TEXT, group_json TEXT NOT NULL, recorded_at REAL NOT NULL,
+        PRIMARY KEY(record_id,job_id))''')
     return db
 
 
@@ -117,14 +161,26 @@ def save(path, events, coverage, day, zone):
     try:
         before = db.execute('SELECT COUNT(*) FROM events').fetchone()[0]
         with db:
+            from .evidence import redact
+            project_metadata = {(item['project'], item['project_alias']): item for item in events if item.get('project_name')}
+            for item in project_metadata.values():
+                db.execute('INSERT OR REPLACE INTO projects VALUES (?,?)', (item['project'], redact(item['project_name'], 80)))
+                db.execute('INSERT OR REPLACE INTO project_aliases VALUES (?,?)', (item['project_alias'], item['project']))
             db.executemany(f'INSERT INTO events ({",".join(FIELDS)}) VALUES ({placeholders}) '
                            f'ON CONFLICT(id) DO UPDATE SET {updates}', [[e[k] for k in FIELDS] for e in selected])
+            from .projects import migrate
+            migrate(db)
             # Keep only latest coverage per source; no source paths or raw errors.
             coverage = dict(coverage, date=day, timezone=zone, selected_events=len(selected))
             db.execute('DELETE FROM imports WHERE source=?', (coverage['source'],))
             db.execute("INSERT INTO imports VALUES (?,datetime('now'),?)", (coverage['source'], json.dumps(coverage)))
             db.execute('INSERT OR REPLACE INTO import_days VALUES (?,?,?,?)',
                        (coverage['source'], day, zone, json.dumps(coverage)))
+            meaningful = sorted((e['id'], e['status']) for e in selected if start <= e['ts'] < end
+                                and e['kind'] in ('user', 'assistant') and e['status'] != 'toolUse')
+            revision = hashlib.sha256(json.dumps(meaningful).encode()).hexdigest()
+            db.execute('INSERT OR REPLACE INTO activity_revisions VALUES (?,?,?,?)',
+                       (coverage['source'], day, zone, revision))
         after = db.execute('SELECT COUNT(*) FROM events').fetchone()[0]
         return {'selected_events': len(selected), 'new_events': after - before, 'coverage': coverage}
     finally:
@@ -176,6 +232,9 @@ def report_data(path, day, zone):
                    WHERE l.task_id=? ORDER BY c.ts, c.id''', (row['id'],))]
             reviews.append(item)
         data['task_reviews'] = reviews
+        if db.execute('SELECT 1 FROM work_records WHERE day=? LIMIT 1', (day,)).fetchone():
+            from .ledger import work_record_data
+            data['automatic_work'] = work_record_data(path, day, zone)
         if drafts:
             data['limitations'][-1] = 'LLM总结为证据范围内的待审草稿，引用有效不等于成果已验证。'
         return data
@@ -187,7 +246,19 @@ def markdown(data, detail='brief'):
     from .documents import build_document, document_markdown
     if detail not in ('brief', 'full'):
         raise ValueError('Invalid report detail')
+    automatic = data.get('automatic_work')
+    if automatic:
+        represented = {record['source_task_id'] for record in automatic['records']}
+        manual = {review['id'] for review in data.get('task_reviews', [])}
+        data = dict(data,
+            task_records=[task for task in data.get('task_records', []) if task['id'] not in represented or task['id'] in manual],
+            task_summaries=[draft for draft in data.get('task_summaries', []) if draft['task_id'] not in represented or draft['task_id'] in manual])
     document = build_document([data], data['date'], data['date'], data['timezone'], 'day')
+    if automatic:
+        document['automatic_work'] = automatic
+        stats = automatic['stats']
+        document['overview'] = (f'自动整理 {stats["total"]} 项任务记录，归档 {stats["archived"]} 项，受阻 {stats["blocked"]} 项；'
+                                f'活跃时长估计 {stats["active_seconds"] / 60:.1f} 分钟。自动记录无需人工重填，归档不等于人工验收。')
     document['detail'] = detail
     return document_markdown(document)
 

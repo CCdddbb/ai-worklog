@@ -50,9 +50,26 @@ def week_data(path, day, zone):
                 days[current]['coverage'].append(coverage)
     finally:
         db.close()
+    from .ledger import work_record_data
+    automatic = work_record_data(path, day, zone, 'week')
+    for item in days.values():
+        auto_records = [record for record in automatic['records'] if record['day'] == item['date']]
+        item['automatic_records'] = auto_records
+        if auto_records:
+            sources = {record['source_task_id'] for record in auto_records}
+            item['manual_tasks'] = item['tasks']
+            item['tasks'] = [task for task in item['tasks'] if task['id'] not in sources]
+            item['tasks'].extend({'id': record['id'], 'title': record['title'], 'status': record['status'],
+                'outcome': record['work']['outcome']['text'] if record['work']['outcome'] else record['work']['problem']['text'],
+                'next_steps': '；'.join(entry['text'] for entry in record['work']['remaining']),
+                'verification': record['work']['verification']['text'] if record['work']['verification'] else '',
+                'active_seconds': record['active_seconds'], 'category': record['category_label'], 'automatic': True}
+                for record in auto_records)
+        item['states'].update(reported_resolved=0, discussed=0)
     all_sessions = set()
     totals = {'events': 0, 'requests': 0, 'tokens': 0, 'tasks': 0, 'confirmed': 0,
-              'blocked': 0, 'in_progress': 0, 'unreviewed': 0, 'active_days': 0, 'recorded_days': 0}
+              'blocked': 0, 'in_progress': 0, 'unreviewed': 0, 'active_days': 0, 'recorded_days': 0,
+              'reported_resolved': 0, 'discussed': 0}
     for item in days.values():
         all_sessions.update(item['sessions'])
         item['sessions'] = len(item['sessions'])
@@ -73,5 +90,5 @@ def week_data(path, day, zone):
         totals['recorded_days'] += item['recorded']
     totals['sessions'] = len(all_sessions)
     return {'first': first.isoformat(), 'last': last.isoformat(), 'timezone': zone,
-            'days': list(days.values()), 'totals': totals,
+            'days': list(days.values()), 'totals': totals, 'automatic_work': automatic,
             'limitations': '按任务所属日期展示当前审阅状态，并非历史完成时间或真实工时。未记录不等于没有工作；跨日同名任务不会自动合并。'}

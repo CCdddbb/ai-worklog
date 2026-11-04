@@ -193,6 +193,7 @@ class TaskBoard {
 			).json();
 			if (this.current.date !== day || serial !== this.refreshSerial) return;
 			this.enabled = value.enabled;
+			this.autoEnabled = Boolean(value.automation?.enabled);
 			this.llmEnabled = value.llm_enabled;
 			this.commits = value.commits || [];
 			this.tasks = value.tasks;
@@ -213,7 +214,7 @@ class TaskBoard {
 				this.modelSettingsInitialized = true;
 			}
 			$("summary-config").textContent = value.llm_enabled
-				? `${value.provider}/${value.model} · ${value.allow_excerpts ? "已授权脱敏摘录" : "仅元数据，无法总结业务细节"} · 今日 ${value.runs_today}/${value.daily_limit} 次（非费用上限）`
+				? `${value.provider}/${value.model} · ${value.allow_excerpts ? "已授权脱敏摘录" : "仅元数据，无法总结业务细节"} · 今日 ${value.runs_today} 次 · 不限次数`
 				: "尚未启用模型，不会产生 AI 总结或费用。";
 			$("summary-enable").textContent = value.llm_enabled
 				? "更新总结设置"
@@ -223,7 +224,7 @@ class TaskBoard {
 			$("task-create").disabled = !value.enabled || this.creating;
 			$("task-settings").textContent = value.enabled
 				? value.llm_enabled
-					? `模型 ${value.provider}/${value.model} · ${value.allow_excerpts ? "脱敏摘录已授权，可能发往云端" : "仅元数据"} · ${value.auto ? `新活动空闲${value.idle_minutes}分钟后自动阶段总结` : "自动模式未启用"} · 今日已执行${value.runs_today}/${value.daily_limit}个总结任务（不是费用上限）`
+					? `模型 ${value.provider}/${value.model} · ${value.allow_excerpts ? "脱敏摘录已授权，可能发往云端" : "仅元数据"} · ${value.auto ? `新活动空闲${value.idle_minutes}分钟后自动阶段总结` : "自动模式未启用"} · 今日已执行${value.runs_today}个总结任务 · 不限次数`
 					: "可直接手动记录；需要 AI 草稿时，在“模型与授权”中启用。"
 				: "本地任务服务不可用。";
 			this.pending = value.tasks.some(
@@ -233,6 +234,8 @@ class TaskBoard {
 			this.reconcileTasks(value.tasks);
 			this.renderFocus(value.tasks);
 			renderSummaryBoard(value.tasks, this.current);
+			window.worklogLedger?.updateAutomation(value.automation);
+			window.worklogLedger?.load();
 			if (wasPending && !this.pending) load();
 		} catch (error) {
 			if (this.current.date !== day || serial !== this.refreshSerial) return;
@@ -443,7 +446,7 @@ class TaskBoard {
 			return;
 		}
 		const card = $(`task-${task.id}`);
-		const signature = JSON.stringify([task, this.commits]);
+		const signature = JSON.stringify([task, this.commits, this.autoEnabled]);
 		if (card?.renderSignature === signature) return;
 		if (
 			card?.contains(document.activeElement) &&
@@ -467,6 +470,8 @@ class TaskBoard {
 		showView(document.querySelector('[data-view="tasks"]'), { remember });
 		const card = $(`task-${task.id}`);
 		card?.scrollIntoView({ block: "center" });
+		const optional = card?.querySelector(".optional-review");
+		if (optional) optional.open = true;
 		card?.querySelector(".review-outcome")?.focus({ preventScroll: true });
 	}
 	async deferSession(session, deferred) {
@@ -1000,7 +1005,15 @@ class TaskBoard {
 				}
 			}
 		}
-		box.append(this.reviewForm(task));
+		if (this.autoEnabled) {
+			const optional = element("details", undefined, "optional-review");
+			optional.open = this.drafts.has(task.id);
+			optional.append(
+				element("summary", "可选：纠正记录或补充线下工作"),
+				this.reviewForm(task),
+			);
+			box.append(optional);
+		} else box.append(this.reviewForm(task));
 		return box;
 	}
 	reviewForm(task) {

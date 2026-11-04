@@ -1,0 +1,232 @@
+/* Automatic task records extend the existing local Workbench visual system. */
+#task-filters {
+	border: 0;
+	padding: 0;
+	min-inline-size: 0;
+}
+#open-tasks,
+#automation-toggle,
+#open-archive {
+	transition: none;
+}
+.automatic-workbench > .section-head {
+	align-items: start;
+}
+.automatic-empty #automatic-stats,
+.automatic-empty #automatic-time-note,
+.automatic-empty #automatic-records {
+	display: none;
+}
+.automatic-empty #automation-options {
+	margin-top: 8px;
+}
+#automatic-stats,
+#archive-stats {
+	margin-top: 24px;
+}
+#automatic-stats strong,
+#archive-stats strong {
+	font-size: 24px;
+	line-height: 32px;
+}
+#automatic-stats article,
+#archive-stats article {
+	min-width: 0;
+}
+#automatic-records {
+	display: grid;
+	gap: 16px;
+}
+.ledger-record {
+	margin-bottom: 16px;
+	padding: 24px;
+	overflow-wrap: anywhere;
+}
+#automatic-records .ledger-record {
+	margin-bottom: 0;
+}
+.ledger-record h3 {
+	margin: 0;
+	font-size: 16px;
+	line-height: 24px;
+	font-weight: 600;
+	text-wrap: pretty;
+}
+.ledger-record p,
+.ledger-actions {
+	font-size: 14px;
+	line-height: 20px;
+	text-wrap: pretty;
+}
+.ledger-record .ledger-meta {
+	margin-top: 12px;
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 16px;
+}
+.ledger-problem {
+	color: var(--ink);
+}
+.ledger-actions {
+	padding-left: 24px;
+	color: var(--muted);
+}
+.ledger-actions li {
+	margin-bottom: 8px;
+}
+.ledger-outcome {
+	font-weight: 500;
+}
+.ledger-details,
+.ledger-corrections,
+.optional-review,
+#automation-options {
+	margin-top: 16px;
+	font-size: 12px;
+	line-height: 16px;
+}
+.ledger-details summary,
+.ledger-corrections summary,
+.optional-review summary,
+#automation-options summary {
+	cursor: pointer;
+	color: var(--muted);
+	padding-block: 8px;
+}
+.ledger-corrections label {
+	display: inline-grid;
+	gap: 8px;
+	margin: 12px 12px 0 0;
+}
+.ledger-corrections button {
+	margin: 12px 12px 0 0;
+}
+.archive-filters {
+	display: flex;
+	gap: 12px;
+	flex-wrap: wrap;
+}
+.archive-filters label {
+	display: grid;
+	gap: 8px;
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 16px;
+}
+.archive-filters select {
+	min-width: 120px;
+}
+.ledger-categories {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 16px;
+}
+.ledger-category {
+	display: grid;
+	gap: 12px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	padding: 16px;
+	font-size: 12px;
+	line-height: 16px;
+}
+.ledger-category strong {
+	color: var(--ink);
+	font-weight: 500;
+}
+.ledger-category span {
+	color: var(--muted);
+}
+.ledger-category progress {
+	width: 100%;
+	height: 8px;
+	accent-color: var(--accent);
+}
+.ledger-empty {
+	padding: 24px;
+	background: var(--bg);
+	border-radius: 8px;
+	color: var(--muted);
+	font-size: 14px;
+	line-height: 20px;
+}
+#automatic-time-note,
+#archive-range {
+	max-width: 100%;
+	font-size: 12px;
+	line-height: 16px;
+}
+.manual-report-appendix {
+	margin-top: 24px;
+}
+.manual-report-appendix > summary {
+	cursor: pointer;
+	color: var(--muted);
+	font-size: 14px;
+	line-height: 20px;
+}
+.project-node {
+	padding: 16px;
+	margin-top: 16px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+}
+.project-node > summary {
+	font-size: 18px;
+	line-height: 28px;
+	font-weight: 600;
+}
+.conversation-node {
+	margin: 16px 0 0 16px;
+}
+.conversation-node > summary {
+	font-size: 16px;
+	line-height: 24px;
+	font-weight: 500;
+}
+.conversation-parts {
+	padding-inline-start: 24px;
+	margin: 8px 0;
+}
+.conversation-part {
+	padding: 12px 0;
+	font-size: 14px;
+	line-height: 20px;
+	overflow-wrap: anywhere;
+}
+.conversation-part > p {
+	margin: 8px 0;
+}
+.conversation-branch > summary {
+	cursor: pointer;
+	overflow-wrap: anywhere;
+}
+.conversation-progress {
+	margin-top: 16px;
+}
+#conversation-tree {
+	min-width: 0;
+}
+@media (max-width: 700px) {
+	.ledger-categories {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.ledger-record {
+		padding: 16px;
+	}
+	.archive-filters {
+		width: 100%;
+	}
+	.archive-filters label {
+		flex: 1 1 120px;
+	}
+	.archive-filters select {
+		width: 100%;
+		min-width: 0;
+	}
+	#conversation-stats,
+	#automatic-stats,
+	#archive-stats {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}

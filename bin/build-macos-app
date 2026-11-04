@@ -15,7 +15,7 @@ mkdir -p "$APP/Contents/Resources/worklog" "$APP/Contents/Resources/static"
 find "$APP/Contents/Resources/worklog" "$APP/Contents/Resources/static" -type f -delete
 cp "$ROOT"/worklog/*.py "$APP/Contents/Resources/worklog/"
 cp "$ROOT/desktop/macos/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
-cp "$ROOT"/static/*.js "$ROOT"/static/*.css "$ROOT"/static/*.html "$APP/Contents/Resources/static/"
+cp "$ROOT"/static/*.js "$ROOT"/static/*.css "$ROOT"/static/*.html "$ROOT"/static/*.svg "$APP/Contents/Resources/static/"
 mkdir -p "$APP/Contents/Resources/static/fonts"
 cp "$ROOT"/static/fonts/*.ttf "$APP/Contents/Resources/static/fonts/" 2>/dev/null || true
 swiftc -swift-version 5 -target "$(uname -m)-apple-macosx12.0" -O -framework AppKit -framework WebKit \

@@ -6,6 +6,17 @@ let data = null;
 let zone = "Asia/Shanghai";
 let loading = false;
 let reloadRequested = false;
+let followToday = null;
+function localToday() {
+	const parts = new Intl.DateTimeFormat("en-CA", {
+		timeZone: zone,
+		year: "numeric",
+		month: "2-digit",
+		day: "2-digit",
+	}).formatToParts(new Date());
+	const get = (type) => parts.find((part) => part.type === type).value;
+	return `${get("year")}-${get("month")}-${get("day")}`;
+}
 const number = (v) => Number(v || 0).toLocaleString("zh-CN");
 const clock = (ts) =>
 	new Date(ts * 1000).toLocaleTimeString("zh-CN", {
@@ -70,6 +81,7 @@ function reportUrl() {
 function render(value) {
 	data = value;
 	zone = value.timezone;
+	if (followToday === null) followToday = value.date === localToday();
 	$("date").value = value.date;
 	$("zone").textContent = zone;
 	$("active").textContent =
@@ -170,6 +182,9 @@ async function load() {
 		reloadRequested = true;
 		return;
 	}
+	if (data && $("date").value !== data.date)
+		followToday = $("date").value === localToday();
+	if (followToday) $("date").value = localToday();
 	loading = true;
 	const requestedDay = $("date").value;
 	$("refresh").disabled = true;
@@ -220,7 +235,10 @@ async function loadReport() {
 		throw error;
 	}
 }
-$("date").addEventListener("change", load);
+$("date").addEventListener("change", () => {
+	followToday = $("date").value === localToday();
+	load();
+});
 $("refresh").addEventListener("click", load);
 for (const id of ["report-period", "report-detail"])
 	$(id).addEventListener("change", async () => {
@@ -374,7 +392,8 @@ async function showView(button, { remember = true, force = false } = {}) {
 	$("heading").textContent =
 		button.querySelector("span:last-child").textContent;
 	const descriptions = {
-		overview: "先处理需要你关注的工作，再回看成果。",
+		overview: "自动记录做了什么、解决了什么，以及投入的活跃时长。",
+		archive: "按日期、分类和状态归档工作，人工修订可选。",
 		weekly: "把每天的工作、成果和 AI 使用串成一周。",
 		tasks: "串联工作上下文，审阅并记录每一份成果。",
 		report: "让经过确认的工作，成为值得回看的记录。",
@@ -385,6 +404,7 @@ async function showView(button, { remember = true, force = false } = {}) {
 	applyViewContext(button.dataset.view);
 	updateBackButton();
 	if (button.dataset.view === "weekly") window.worklogWeek?.load();
+	if (button.dataset.view === "archive") window.worklogLedger?.load();
 	if (button.dataset.view === "report") {
 		try {
 			await loadReport();
@@ -397,7 +417,9 @@ for (const button of document.querySelectorAll("nav button")) {
 	button.addEventListener("click", () => showView(button));
 }
 $("open-tasks").addEventListener("click", () =>
-	window.worklogTasks?.beginTriage(),
+	window.worklogLedger?.automation?.enabled
+		? showView(document.querySelector('[data-view="tasks"]'))
+		: window.worklogTasks?.beginTriage(),
 );
 $("open-week").addEventListener("click", () =>
 	showView(document.querySelector('[data-view="weekly"]')),

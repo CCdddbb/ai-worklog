@@ -38,7 +38,7 @@ class TaskService:
         self.allow_excerpts = allow_excerpts
         self.auto = auto
         self.idle_seconds = idle_seconds
-        self.daily_limit = daily_limit
+        self.daily_limit = None  # Retained as a compatibility field; summaries have no daily cap.
         self.zone = zone
         self.clock = clock
         self.started = clock()
@@ -48,10 +48,12 @@ class TaskService:
             raise ValueError('Excerpts require explicitly configured source directories')
         if any(not Path(root).expanduser().is_dir() for root in self.roots.values()):
             raise ValueError('Source directories must exist')
-        if idle_seconds < 60 or not 1 <= daily_limit <= 100:
-            raise ValueError('Invalid idle threshold or daily job limit')
+        if idle_seconds < 60:
+            raise ValueError('Invalid idle threshold')
         connect(self.path).close()
         self.key = salt(self.path)
+        from .automation import restore
+        restore(self)
         lock_path = str(self.path) + '.summary.lock'
         self.lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0), 0o600)
         try:
@@ -63,6 +65,20 @@ class TaskService:
         try:
             with db:
                 db.execute("UPDATE summaries SET status='interrupted',error='process_interrupted' WHERE status='running'")
+                from .conversation_upgrade import upgrade
+                self.automatic_retries.update(upgrade(db))
+                from .conversations import backfill
+                backfill(db)
+                for row in db.execute('SELECT t.id,t.sessions FROM tasks t JOIN task_automation a ON a.task_id=t.id'):
+                    if len(json.loads(row['sessions'])) != 1:
+                        db.execute("UPDATE summaries SET status='interrupted',error='conversation_unit_migrated' WHERE task_id=? AND status='queued'", (row['id'],))
+                if self.auto:
+                    resumed = {row[0] for row in db.execute("SELECT s.task_id FROM summaries s WHERE s.status IN ('error','interrupted') "
+                        "AND s.error IN ('cancelled','process_interrupted') AND s.task_id IN (SELECT task_id FROM conversation_sources) "
+                        'AND NOT EXISTS (SELECT 1 FROM summaries newer WHERE newer.task_id=s.task_id AND newer.rowid>s.rowid)')}
+                    self.automatic_retries.update(resumed)
+                    for task_id in resumed:
+                        db.execute('UPDATE task_automation SET attempt_digest=NULL,last_error=NULL WHERE task_id=?', (task_id,))
         finally:
             db.close()
         self.thread = threading.Thread(target=self._loop, daemon=True, name='worklog-summary')
@@ -149,7 +165,7 @@ class TaskService:
                     db.close()
             return snapshot(task, self._rows(task), self.roots, self.key, self.allow_excerpts)
 
-    def request(self, task_id, mode='stage', retry=False):
+    def request(self, task_id, mode='stage', retry=False, automatic_rows=None, covered_rows=None):
         if self.runner is None:
             raise ValueError('Summary model is not enabled')
         if not json.loads(self._task(task_id)['sessions']):
@@ -163,8 +179,27 @@ class TaskService:
             now = self.clock()
             if mode == 'final' and task['end_ts'] is None:
                 task['end_ts'] = min(now, bounds(task['day'], self.zone)[1])
-            data = snapshot(task, self._rows(task), self.roots, self.key, self.allow_excerpts)
+            data = snapshot(task, self._rows(task) if automatic_rows is None else automatic_rows, self.roots, self.key, self.allow_excerpts)
+            if covered_rows is not None:
+                data['summary_contract'] = 3
+                data['automatic_batch'] = [{'id': row['id'], 'digest': activity_digest([row])} for row in covered_rows]
+                fresh = {'e_' + row['id'][:16] for row in covered_rows}
+                for entry in data['evidence']:
+                    entry['context_only'] = entry['id'] not in fresh
+                from .evidence import readable
+                if not any(not entry['context_only'] and readable(entry['text']) for entry in data['evidence']):
+                    raise EvidenceUnavailable('no_new_business_evidence', '本批新记录没有可读正文，不会仅用旧上下文重复总结收费。', data['coverage'])
             require_evidence(data)
+            sessions = json.loads(task['sessions'])
+            if len(sessions) == 1 and automatic_rows is not None:
+                from .conversations import context
+                db = connect(self.path)
+                try:
+                    data['conversation_context'] = context(db, sessions[0], self.automation_since)
+                    while data['conversation_context'] and len(json.dumps(data, ensure_ascii=False).encode()) > 48000:
+                        data['conversation_context'].pop()
+                finally:
+                    db.close()
             encoded = json.dumps(data, ensure_ascii=False, sort_keys=True)
             fingerprint = hashlib.sha256((encoded + self.runner.provider + self.runner.model).encode()).hexdigest()
             db = connect(self.path)
@@ -174,12 +209,6 @@ class TaskService:
                                  (task_id, mode, fingerprint, fingerprint + ':retry:%')).fetchone()
                 if old and (old['status'] in ['queued', 'running', 'success'] or not retry):
                     return {'id': old['id'], 'status': old['status'], 'cached': True}
-                today = datetime.fromtimestamp(now, ZoneInfo(self.zone)).date().isoformat()
-                daily_start, daily_end = bounds(today, self.zone)
-                used = db.execute('SELECT COUNT(*) FROM summaries WHERE created_at>=? AND created_at<?',
-                                  (daily_start, daily_end)).fetchone()[0]
-                if used >= self.daily_limit:
-                    raise ValueError('Daily summary job limit reached')
                 job_id = uuid.uuid4().hex
                 with db:
                     if old:
@@ -206,6 +235,7 @@ class TaskService:
             for row in db.execute('SELECT * FROM tasks WHERE day=? ORDER BY created_at DESC LIMIT 100', (day,)):
                 task = dict(row)
                 task['sessions'] = json.loads(task['sessions'])
+                task['automatically_managed'] = bool(db.execute('SELECT 1 FROM task_automation WHERE task_id=?', (task['id'],)).fetchone())
                 reviewed = db.execute('SELECT * FROM task_reviews WHERE task_id=?', (task['id'],)).fetchone()
                 task['review'] = dict(reviewed) if reviewed else None
                 task['commit_ids'] = [linked[0] for linked in db.execute(
@@ -234,7 +264,8 @@ class TaskService:
                     'runs_today': runs_today,
                     'idle_minutes': self.idle_seconds / 60, 'daily_limit': self.daily_limit,
                     'provider': self.runner.provider if self.runner else None,
-                    'model': self.runner.model if self.runner else None}
+                    'model': self.runner.model if self.runner else None,
+                    'automation': self.automation_status()}
         finally:
             db.close()
 
@@ -294,8 +325,33 @@ class TaskService:
                 from .llm import create_runner
                 self.runner = create_runner('codebuddy') if backend == 'codebuddy' else create_runner()
             self.allow_excerpts = allow_excerpts
+            if self.auto:
+                self.automation_reason = ''
+                from .automation import persist
+                persist(self)
+                self.automation_wake.set()
         return {'llm_enabled': True, 'allow_excerpts': self.allow_excerpts,
                 'provider': self.runner.provider, 'model': self.runner.model}
+
+    def configure_automation(self, enabled, scope='now', consent=False, idle_minutes=3):
+        from .automation import configure
+        return configure(self, enabled, scope, consent, idle_minutes)
+
+    def retry_automation(self):
+        from .automation import retry_failures
+        return retry_failures(self)
+
+    def automation_status(self):
+        from .automation import status
+        return status(self)
+
+    def revise_work_record(self, record_id, category=None, archived=None):
+        from .ledger import revise_record
+        db = connect(self.path)
+        try:
+            return revise_record(db, record_id, category, archived, self.clock())
+        finally:
+            db.close()
 
     def defer_session(self, session, day, deferred):
         from .triage import defer_session
@@ -354,68 +410,21 @@ class TaskService:
             db.close()
 
     def auto_tick(self):
-        if not self.auto or not self.allow_excerpts:
-            return
-        with self.guard:
-            now = self.clock()
-            day = datetime.fromtimestamp(now, ZoneInfo(self.zone)).date().isoformat()
-            start, end = bounds(day, self.zone)
-            db = connect(self.path)
-            try:
-                sessions = [r[0] for r in db.execute("SELECT DISTINCT session FROM events WHERE ts>=? AND ts<? AND source IN ('pi','codex')",
-                                                    (max(start, self.started), min(end, now + 1)))]
-                tasks = [dict(r) for r in db.execute("SELECT * FROM tasks WHERE day=? AND status='open'", (day,))]
-                from .triage import deferred_sessions
-                deferred = deferred_sessions(db, day, self.zone)
-                for session in sessions:
-                    if session in deferred:
-                        continue
-                    if any(session in json.loads(t['sessions']) for t in tasks):
-                        continue
-                    latest_end = db.execute("SELECT MAX(end_ts) FROM tasks WHERE day=? AND status='completed' AND sessions LIKE ?",
-                                            (day, '%' + session + '%')).fetchone()[0]
-                    since = max(start, self.started, (latest_end or 0) + 0.001)
-                    has_new = db.execute('SELECT source,ts,title FROM events WHERE session=? AND ts>? AND ts<=? ORDER BY ts LIMIT 1', (session, since, now)).fetchone()
-                    if has_new:
-                        from .presentation import topic_name
-                        named = db.execute('SELECT name FROM session_names WHERE session=?', (session,)).fetchone()
-                        local_time = datetime.fromtimestamp(has_new['ts'], ZoneInfo(self.zone)).strftime('%H:%M')
-                        name = named['name'] if named else topic_name([has_new['title']]) or f'{has_new["source"].capitalize()} · {local_time} 的协作'
-                        task = self.create('自动记录 · ' + name, [session], day, internal_start=since)
-                        tasks.append(task)
-                for task in tasks:
-                    rows = self._rows(task)
-                    active = [r for r in rows if r['kind'] not in ['usage', 'auxiliary']]
-                    if not active:
-                        continue
-                    last = active[-1]
-                    # Don't mistake an outstanding tool call/user input for a completed run.
-                    if last['status'] not in ['stop', 'length', 'error', 'aborted']:
-                        continue
-                    if last['ts'] < self.started or now - last['ts'] < self.idle_seconds:
-                        continue
-                    digest = activity_digest(rows)
-                    if db.execute("SELECT 1 FROM summaries WHERE task_id=? AND mode='stage' AND activity_digest=? LIMIT 1",
-                                  (task['id'], digest)).fetchone():
-                        continue
-                    try:
-                        self.request(task['id'], 'stage')
-                    except ValueError:
-                        pass  # Budget/scope guard: no automatic retry or exception contents.
-            finally:
-                db.close()
+        from .automation import tick
+        tick(self)
 
     def _loop(self):
         next_auto = 0
         while not self.stop.wait(0.5):
-            if self.runner is None:
-                continue
-            if time.monotonic() >= next_auto:
+            if time.monotonic() >= next_auto or self.automation_wake.is_set():
+                self.automation_wake.clear()
                 next_auto = time.monotonic() + 15
                 try:
                     self.auto_tick()
                 except (OSError, ValueError, sqlite3.Error):
                     LOGGER.warning('Auto summary scan unavailable; private diagnostics suppressed.')
+            if self.runner is None:
+                continue
             try:
                 self._one_job()
             except (OSError, ValueError, sqlite3.Error):
@@ -426,10 +435,6 @@ class TaskService:
         with self.guard:
             db = connect(self.path)
             try:
-                today = datetime.fromtimestamp(self.clock(), ZoneInfo(self.zone)).date().isoformat()
-                used = db.execute('SELECT COUNT(*) FROM summaries WHERE started_at>=? AND started_at<?', bounds(today, self.zone)).fetchone()[0]
-                if used >= self.daily_limit:
-                    return  # Old queued jobs must not bypass today's execution budget.
                 job = db.execute("SELECT * FROM summaries WHERE status='queued' ORDER BY created_at,rowid LIMIT 1").fetchone()
                 if not job:
                     return
@@ -448,7 +453,9 @@ class TaskService:
             if data.get('evidence_version') != 2:
                 raise SummaryError('configuration_changed')
             require_evidence(data)
-            result, cost = self.runner(data, job['mode'], self.stop)
+            model_data = dict(data)
+            model_data.pop('automatic_batch', None)
+            result, cost = self.runner(model_data, job['mode'], self.stop)
             result = validate_result(json.dumps(result, ensure_ascii=False), {e['id'] for e in data['evidence']})
             validate_business_result(result, data)
         except EvidenceUnavailable:
@@ -459,7 +466,7 @@ class TaskService:
                 'invalid_text', 'invalid_citation', 'invalid_pi_stream', 'tools_forbidden',
                 'incomplete_response', 'configuration_changed', 'codebuddy_failed',
                 'invalid_codebuddy_stream', 'business_summary_required', 'non_content_citation',
-                'missing_outcome', 'missing_verification'] else 'summary_failed'
+                'missing_outcome', 'missing_verification', 'context_only_summary', 'status_conflict'] else 'summary_failed'
         except (OSError, ValueError, TypeError, KeyError, RuntimeError, sqlite3.Error):
             error = 'summary_failed'
         db = connect(self.path)
@@ -468,6 +475,13 @@ class TaskService:
                 db.execute('UPDATE summaries SET status=?,output_json=?,usage_json=?,error=?,finished_at=? WHERE id=?',
                            ('error' if error else 'success', json.dumps(result, ensure_ascii=False) if result else None,
                             json.dumps(cost) if cost else None, error, self.clock(), job['id']))
+                if not error:
+                    from .ledger import project_summary
+                    project_summary(db, self._task(job['task_id']), job['id'], data, result, self.clock())
+                    from .automation import mark_covered
+                    mark_covered(db, job['task_id'], data, result)
+                db.execute('UPDATE task_automation SET last_error=?,updated_at=? WHERE task_id=?',
+                           (error, self.clock(), job['task_id']))
                 if not error and data['coverage'].get('excerpts_available', 0):
                     sessions = {item['session'] for item in data['evidence']}
                     if len(sessions) == 1:
@@ -477,5 +491,11 @@ class TaskService:
                             db.execute('INSERT INTO session_names VALUES (?,?,?) ON CONFLICT(session) '
                                 "DO UPDATE SET name=excluded.name,origin=excluded.origin WHERE session_names.origin!='manual'",
                                 (next(iter(sessions)), name, 'summary'))
+        except (ValueError, TypeError, KeyError, sqlite3.Error):
+            with db:
+                db.execute("UPDATE summaries SET status='error',output_json=NULL,error='projection_failed',finished_at=? WHERE id=?",
+                           (self.clock(), job['id']))
+                db.execute("UPDATE task_automation SET last_error='projection_failed',updated_at=? WHERE task_id=?",
+                           (self.clock(), job['task_id']))
         finally:
             db.close()

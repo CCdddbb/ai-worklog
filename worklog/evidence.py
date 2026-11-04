@@ -239,6 +239,10 @@ def snapshot(task, rows, roots, key, allow_excerpts):
         item['text'] = clip_text(bodies.get(row['id'], ''), caps[row['id']])
         items.append(item)
     result = {'evidence_version': EVIDENCE_VERSION, 'task': redact(task['title'], 100), 'evidence': items,
+              'scope': {'first_ts': ordered[0]['ts'], 'last_ts': ordered[-1]['ts'],
+                        'sessions': {session: {'first_ts': min(r['ts'] for r in ordered if r['session'] == session),
+                                               'last_ts': max(r['ts'] for r in ordered if r['session'] == session)}
+                                     for session in {r['session'] for r in ordered}}},
               'coverage': {'total_activity_events': len(ordered), 'selected_events': len(items),
                            'dialogue_events': len(dialogue), 'candidate_events': len(candidates),
                            'readable_candidates': len(meaningful), 'tool_events_excluded': sum(r['kind'] == 'tool' for r in ordered),

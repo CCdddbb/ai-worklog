@@ -55,17 +55,17 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
             url = urlsplit(self.path)
             assets = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'),
                       '/tasks.js': ('tasks.js', 'text/javascript'), '/dashboard.js': ('dashboard.js', 'text/javascript'),
-                      '/weekly.js': ('weekly.js', 'text/javascript'), '/reports.js': ('reports.js', 'text/javascript'),
-                      '/style.css': ('style.css', 'text/css'), '/workbench.css': ('workbench.css', 'text/css'),
+                      '/conversations.js': ('conversations.js', 'text/javascript'), '/ledger.js': ('ledger.js', 'text/javascript'), '/weekly.js': ('weekly.js', 'text/javascript'), '/reports.js': ('reports.js', 'text/javascript'),
+                      '/ledger.css': ('ledger.css', 'text/css'), '/style.css': ('style.css', 'text/css'), '/workbench.css': ('workbench.css', 'text/css'),
                       '/logo.svg': ('logo.svg', 'image/svg+xml'),
-                      '/fonts/Manrope-Variable.ttf': ('fonts/Manrope-Variable.ttf', 'font/ttf')}  # noqa: E501
+                      '/fonts/Manrope-Variable.ttf': ('fonts/Manrope-Variable.ttf', 'font/ttf')}
             if not self.access(private=url.path not in assets):
                 return
             if url.path in assets:
                 name, mime = assets[url.path]
                 self.send(200, (STATIC / name).read_bytes(), mime + '; charset=utf-8')
                 return
-            if url.path not in ['/api/day', '/api/week', '/api/report', '/api/report-view', '/api/tasks', '/api/task-preview']:
+            if url.path not in ['/api/day', '/api/week', '/api/report', '/api/report-view', '/api/tasks', '/api/task-preview', '/api/work-records', '/api/work-record-history', '/api/conversations', '/api/conversation-progress']:
                 self.send(404, {'error': 'not_found'})
                 return
             try:
@@ -74,7 +74,20 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                 if len(target_day) != 10:
                     raise ValueError('Invalid date')
                 bounds(target_day, zone)
-                if url.path == '/api/week':
+                if url.path == '/api/conversations':
+                    from .conversations import tree_data
+                    self.send(200, tree_data(db_path, target_day, zone))
+                elif url.path == '/api/conversation-progress':
+                    from .conversations import progress_data
+                    self.send(200, progress_data(db_path, query.get('session', [''])[0]))
+                elif url.path == '/api/work-record-history':
+                    from .ledger import record_history
+                    self.send(200, record_history(db_path, query.get('id', [''])[0]))
+                elif url.path == '/api/work-records':
+                    from .ledger import work_record_data
+                    self.send(200, work_record_data(db_path, target_day, zone, query.get('period', ['day'])[0],
+                        query.get('category', [None])[0], query.get('state', ['all'])[0]))
+                elif url.path == '/api/week':
                     self.send(200, week_data(db_path, target_day, zone))
                 elif url.path == '/api/report-view':
                     self.send(200, report_document(db_path, target_day, zone, query.get('period', ['day'])[0], query.get('detail', ['brief'])[0]))
@@ -106,7 +119,7 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                 return
             path = urlsplit(self.path).path
             if path not in ['/api/tasks', '/api/summarize', '/api/task-review',
-                            '/api/summary-settings', '/api/session-names', '/api/session-rename', '/api/session-triage']:
+                            '/api/summary-settings', '/api/session-names', '/api/session-rename', '/api/session-triage', '/api/automation', '/api/work-record', '/api/automation-retry']:
                 self.send(404, {'error': 'not_found'})
                 return
             if not task_service:
@@ -122,7 +135,22 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                 body = json.loads(self.rfile.read(length))
                 if not isinstance(body, dict):
                     raise TypeError('Invalid object')
-                if path == '/api/summary-settings':
+                if path == '/api/automation-retry':
+                    if body != {'confirm': True}:
+                        raise ValueError('Explicit retry required')
+                    self.send(200, task_service.retry_automation())
+                elif path == '/api/automation':
+                    if set(body) - {'enabled', 'scope', 'consent', 'idle_minutes'} or 'enabled' not in body:
+                        raise ValueError('Invalid automation settings')
+                    self.send(200, task_service.configure_automation(body['enabled'], body.get('scope', 'now'),
+                        body.get('consent', False), body.get('idle_minutes', 3)))
+                elif path == '/api/work-record':
+                    if set(body) - {'id', 'category', 'archived'} or 'id' not in body or len(body) < 2:
+                        raise ValueError('Invalid work-record correction')
+                    if ('category' in body and not isinstance(body['category'], str)) or ('archived' in body and type(body['archived']) is not bool):
+                        raise ValueError('Invalid correction values')
+                    self.send(200, task_service.revise_work_record(body['id'], body.get('category'), body.get('archived')))
+                elif path == '/api/summary-settings':
                     if set(body) - {'allow_excerpts', 'backend'} or 'allow_excerpts' not in body:
                         raise ValueError('Invalid consent')
                     self.send(200, task_service.configure_summary(body['allow_excerpts'], body.get('backend')))
@@ -157,6 +185,8 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                 self.send(409, {'error': error.code, 'hint': str(error), 'coverage': error.coverage})
             except (ValueError, TypeError, OverflowError, RecursionError):
                 hints = {
+                    '/api/automation': '自动总结需明确授权脱敏正文和有效来源，范围仅支持今天或从现在开始；请检查模型与空闲阈值。',
+                    '/api/work-record': '只能更正已存在记录的分类或归档状态，分类需在预设范围内。',
                     '/api/summary-settings': '无法更新模型设置。请确认没有排队/运行中的总结，并检查 CodeBuddy CLI 登录或 Pi CLI 默认模型；摘录需要已配置来源。',
                     '/api/session-rename': '名称需为 1–80 个字符，且会话必须已导入。',
                     '/api/task-review': '结果、验证、下一步和经验每项最多 2000 字；已确认状态需填写结果，关联提交须属于任务当日。',

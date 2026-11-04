@@ -21,3 +21,4 @@ htmlcov/
 # Keep original REA evidence immutable and local; publish a path-free manifest.
 docs/research/*-evidence.json
 docs/research/*-summary.json
+build/

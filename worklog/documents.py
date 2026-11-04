@@ -135,7 +135,20 @@ def report_document(path, day, zone, period='day', detail='brief'):
     while cursor <= last:
         days.append(report_data(path, cursor.isoformat(), zone))
         cursor += timedelta(days=1)
+    from .ledger import work_record_data
+    automatic = work_record_data(path, day, zone, period)
+    represented = {record['source_task_id'] for record in automatic['records']}
+    for data in days:
+        manual = {review['id'] for review in data.get('task_reviews', [])}
+        data['task_records'] = [task for task in data.get('task_records', []) if task['id'] not in represented or task['id'] in manual]
+        data['task_summaries'] = [draft for draft in data.get('task_summaries', []) if draft['task_id'] not in represented or draft['task_id'] in manual]
     document = build_document(days, first.isoformat(), last.isoformat(), zone, period)
+    document['automatic_work'] = automatic
+    stats = document['automatic_work']['stats']
+    if stats['total']:
+        document['overview'] = (f'自动整理 {stats["total"]} 项任务记录，自动归档 {stats["archived"]} 项，'
+                                f'受阻 {stats["blocked"]} 项；已归因活跃时长估计 {stats["active_seconds"] / 60:.1f} 分钟。'
+                                '下列内容自动生成，无需人工重填；自动归档不等于业务验收。')
     document['detail'] = detail
     document['markdown'] = document_markdown(document)
     return document
@@ -145,7 +158,23 @@ def document_markdown(document):
     first, last = document['first'], document['last']
     period = first if first == last else f'{first} 至 {last}'
     lines = [f'# {document["title"]} · {period}', '', '时区：' + document['timezone'], '',
-             '## 一页概览', '', document['overview'], '', '## 已确认成果（人工审阅的任务）', '']
+             '## 一页概览', '', document['overview'], '']
+    automatic = document.get('automatic_work', {})
+    if automatic.get('stats', {}).get('total'):
+        lines += ['## 自动记录的任务、结果与耗时', '', automatic['time_note'], '']
+        for record in automatic['records']:
+            lines += [f'### {record["day"]} · {safe_text(record["title"])}', '',
+                      f'- 分类：{record["category_label"]}；状态：{record["status_label"]}；'
+                      + ('已自动归档（非人工验收）' if record['archived'] else '持续跟进'),
+                      f'- 活跃时长估计：{record["active_seconds"] / 60:.1f} 分钟；记录跨度：{record["span_seconds"] / 60:.1f} 分钟。']
+            lines += business_lines({'work_items': [record['work']]}, '####')
+        lines += ['## 自动分类统计', '', '| 分类 | 任务记录 | 活跃时长估计（分钟） |', '|---|---:|---:|']
+        for category in automatic['categories']:
+            lines.append(f'| {category["label"]} | {category["count"]} | {category["active_seconds"] / 60:.1f} |')
+        if automatic.get('truncated'):
+            lines.append('- 任务明细仅展示前500条，分类统计覆盖本周期全部记录。')
+        lines.append('')
+    lines += ['## 已确认成果（人工审阅的任务）', '']
     records = document['records']
     for status, heading in [('confirmed', None), ('in_progress', '进行中的工作'), ('blocked', '阻塞与风险')]:
         if heading:
@@ -205,7 +234,7 @@ def document_markdown(document):
     if not totals['events']:
         lines.append('- 本日期没有已导入的活动，不能推断没有工作。' if document['period'] == 'day'
                      else '- 本周期没有已导入的活动，不能推断没有工作。')
-    if not records:
+    if not records and not automatic.get('stats', {}).get('total'):
         lines.append('- 工作内容待人工补充。')
     if document['period'] != 'day':
         lines += ['', '| 日期 | 工作记录 | 已确认 | 受阻 | AI 回复 | Token |', '|---|---:|---:|---:|---:|---:|']

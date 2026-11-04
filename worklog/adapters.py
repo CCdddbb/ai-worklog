@@ -87,6 +87,8 @@ def event(salt, source, session, project, record_id, ts, kind, provider='unknown
         'status': status, 'title': title, 'file_id': file_id,
         'error_code': '', **usage({})}
     row.update(values or {})
+    from .projects import project_metadata
+    row.update(project_metadata(salt, project))
     return row
 
 
@@ -212,6 +214,8 @@ def codex_events(path, salt, stats, titles=False, window=None):
 
 
 def collect(root, source, salt, titles=False, max_files=100, window=None):
+    from .projects import repository
+    repository.cache_clear()  # A workspace can become a repository while the App is running.
     root = Path(root).expanduser().resolve()
     if not root.is_dir() or source not in ['pi', 'codex']:
         raise ValueError('Choose an existing Pi/Codex session directory')

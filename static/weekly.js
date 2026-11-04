@@ -1,5 +1,7 @@
 // Weekly records: seven selectable day cards and an honest, gap-aware SVG trend.
 const weekStates = {
+	reported_resolved: "已报告解决",
+	discussed: "方案与讨论",
 	confirmed: "已确认",
 	in_progress: "进行中",
 	blocked: "受阻",
@@ -288,7 +290,13 @@ class WeekBoard {
 				"含 AI 活动或人工记录，非出勤",
 			],
 			["工作记录", value.totals.tasks, "按记录日期统计"],
-			["已确认成果", value.totals.confirmed, "人工确认，非 AI 判定"],
+			value.automatic_work?.stats.total
+				? [
+						"自动归档",
+						value.automatic_work.stats.archived,
+						`活跃估计 ${workDuration(value.automatic_work.stats.active_seconds)} · 非人工验收`,
+					]
+				: ["已确认成果", value.totals.confirmed, "人工确认，非 AI 判定"],
 			[
 				"AI Token",
 				number(value.totals.tokens),
@@ -360,8 +368,17 @@ class WeekBoard {
 				])
 					if (task[key])
 						row.append(element("p", `${label}：${task[key]}`, "hint"));
+				if (task.automatic)
+					row.append(
+						element(
+							"p",
+							`${task.category} · 活跃估计 ${workDuration(task.active_seconds)} · 自动记录，无需填报`,
+							"hint",
+						),
+					);
 				details.append(row);
 				if (
+					task.status === "reported_resolved" ||
 					task.status === "confirmed" ||
 					task.status === "blocked" ||
 					task.next_steps
@@ -380,7 +397,7 @@ class WeekBoard {
 					$("week-recap").append(recap);
 				}
 			}
-			const open = element("button", "查看／补充当天记录");
+			const open = element("button", "查看当天记录");
 			open.type = "button";
 			open.addEventListener("click", () => this.openDay(day.date));
 			details.append(open);

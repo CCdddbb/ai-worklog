@@ -21,10 +21,10 @@ SYSTEM = '''你是业务工作复盘编辑，不是工具调用统计器，也�
 助手最终答复中的改动和测试可以概括，但必须写成“助手报告……”而非独立验证。用户要求/建议不等于已经实施；工具成功不等于测试通过、上线或业务验收。
 outcome说明证据明确报告的结果/已解决问题；没有结果证据必须为null，status用in_progress/blocked/discussed，remaining说明缺口。不要为凑完整而编造结论。没有验证证据时verification为null。verification必须包含已有的成功、失败或部分通过的测试结果；出现“仍有2个回归用例失败”等证据时，verification必须说明失败，而不能写null或“没有验证证据”。
 区分“助手报告定向测试通过”“尚未做生产回归”“用户验收通过”；后续用户指出失败时，不再写已经解决。
-文本可能截断/采样，只能覆盖可见内容，不宣称总结了全部工作。没有正文时应拒绝推断，而不是编写工具流水账。
+每次自动输入只属于一条对话。conversation_context 是该对话已有分项的历史记忆，仅供背景；as_of_ts 可能晚于本批补齐材料，不能将较晚的解决结果倒写成早期成果。同一工作分项应使用历史条目中的id作为continuation_id（新分项不填），尽量延续已有标题，输出本批的新进展，不要把历史成果重复当作今日交付。context_only=true 的条目是先前上下文，只供关联持续任务，不能单独把旧工作再生成一遍；每个工作项至少引用一条本批新证据（context_only=false）。文本可能截断/采样，只能覆盖可见内容，不宣称总结了全部工作。没有正文时应拒绝推断，而不是编写工具流水账。
 必须输出且仅输出JSON：
 {"schema_version":2,"overview":{"text":"用2到4句概括主要工作、结果与重要未完成项","evidence_ids":["e_真实ID"]},"work_items":[{"title":"具体工作主题","problem":{"text":"问题或目标及其影响","evidence_ids":["e_真实ID"]},"actions":[{"text":"具体处理措施及关键变化","evidence_ids":["e_真实ID"]}],"outcome":{"text":"助手报告的结果及解决的问题","evidence_ids":["e_真实ID"]},"verification":null,"remaining":[],"status":"reported_resolved"}]}
-根对象仅这3个字段；work_items每项仅title/problem/actions/outcome/verification/remaining/status这7字段。
+根对象仅这3个字段；work_items每项允许title/problem/actions/outcome/verification/remaining/status和category、continuation_id字段。continuation_id只能引用conversation_context中真实存在的id，同一批不可重复引用；没有明确延续关系时省略该字段。它用于跨日更新分项，不是证据引用。category按工作实质选择feature（功能开发）、bugfix（修复问题）、refactor（重构优化）、testing（测试验证）、docs（文档）、design（方案讨论）、ops（部署运维）、other，不按调用的工具分类。
 problem为证据条目；actions和remaining为证据条目数组；outcome和verification可为null或证据条目。
 证据条目仅text和evidence_ids，每条引用1到24个实际ID，且必须是支持该句的可读正文，不能引用只有工具状态或空文本的事件。
 status只允许reported_resolved（有明确解决报告）、in_progress（实际处理但尚未完成）、blocked（有明确失败/阻塞）、discussed（仅讨论/设计/方案评估，未实施）。明确只讨论桌面方案且未写代码时必须用discussed；可以在outcome写形成的方案结论，但不能声称已实现。最多8项，每项actions最多6条、remaining最多6条，单条不超过250字。'''
@@ -86,7 +86,8 @@ def validate_result(text, evidence_ids):
         raise SummaryError('invalid_schema')
     groups = []
     for raw in value['work_items']:
-        if not isinstance(raw, dict) or set(raw) != {'title', 'problem', 'actions', 'outcome', 'verification', 'remaining', 'status'}:
+        required = {'title', 'problem', 'actions', 'outcome', 'verification', 'remaining', 'status'}
+        if not isinstance(raw, dict) or not required <= set(raw) or set(raw) - required - {'category', 'continuation_id'}:
             raise SummaryError('invalid_schema')
         if not isinstance(raw['title'], str) or not 3 <= len(raw['title'].strip()) <= 100:
             raise SummaryError('invalid_text')
@@ -101,6 +102,15 @@ def validate_result(text, evidence_ids):
             group[key] = item(raw[key]) if raw[key] is not None else None
         if group['status'] == 'reported_resolved' and not group['outcome']:
             raise SummaryError('missing_outcome')
+        from .ledger import CATEGORIES, classify
+        if 'category' in raw and (not isinstance(raw['category'], str) or raw['category'] not in CATEGORIES):
+            raise SummaryError('invalid_schema')
+        group['category'] = raw.get('category') or classify(group)
+        if raw.get('continuation_id') is not None:
+            import re
+            if not isinstance(raw['continuation_id'], str) or not re.fullmatch(r'[a-f0-9]{32}', raw['continuation_id']):
+                raise SummaryError('invalid_schema')
+            group['continuation_id'] = raw['continuation_id']
         groups.append(group)
     result.update(schema_version=2, work_items=groups,
                   work=[entry for group in groups for entry in group['actions']],
@@ -116,13 +126,25 @@ def validate_business_result(result, data):
     if result.get('schema_version') != 2 or not result.get('work_items'):
         raise SummaryError('business_summary_required')
     usable = {entry['id'] for entry in data['evidence'] if entry['kind'] in ('user', 'assistant') and readable(entry.get('text'))}
+    fresh = {entry['id'] for entry in data['evidence'] if entry.get('context_only') is False}
+    allowed = {entry['id'] for entry in data.get('conversation_context', []) if entry.get('id')}
+    continuations = [group['continuation_id'] for group in result['work_items'] if group.get('continuation_id')]
+    if not set(continuations) <= allowed or len(set(continuations)) != len(continuations):
+        raise SummaryError('invalid_schema')
     entries = [result['overview']]
     for group in result['work_items']:
+        if group['status'] == 'reported_resolved' and group['verification'] is not None:
+            import re
+            if re.search(r'仍有.{0,12}失败|依然.{0,12}失败|尚未解决', group['verification']['text']):
+                raise SummaryError('status_conflict')
         if group['verification'] is None:
             import re
             stated = ' '.join(entry['text'] for entry in group['actions'])
             if re.search(r'\d+\s*(?:个|项).{0,12}(?:测试|用例|回归).{0,12}(?:通过|失败)', stated):
                 raise SummaryError('missing_verification')
+        cited = [group['problem'], *group['actions'], *group['remaining'], *[value for value in (group['outcome'], group['verification']) if value]]
+        if fresh and not any(fresh.intersection(entry['evidence_ids']) for entry in cited):
+            raise SummaryError('context_only_summary')
         entries.extend([group['problem'], *group['actions'], *group['remaining']])
         entries.extend(entry for entry in (group['outcome'], group['verification']) if entry)
     if any(not set(entry['evidence_ids']) <= usable for entry in entries):

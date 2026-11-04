@@ -120,18 +120,48 @@ function renderReport(document) {
 		),
 		element("p", `${document.timezone} · ${document.overview}`, "report-lead"),
 	);
+	const automatic = document.automatic_work;
+	const hasAutomatic = Boolean(automatic?.stats.total);
 	const stats = element("div", undefined, "stats report-stats");
-	for (const [label, count] of [
-		["已确认成果", document.totals.confirmed],
-		["推进中", document.totals.in_progress],
-		["受阻", document.totals.blocked],
-		["待核对记录", document.totals.needs_review],
-	]) {
+	for (const [label, count] of hasAutomatic
+		? [
+				["自动任务记录", automatic.stats.total],
+				["已归档", automatic.stats.archived],
+				["受阻", automatic.stats.blocked],
+				["活跃估计", workDuration(automatic.stats.active_seconds)],
+			]
+		: [
+				["已确认成果", document.totals.confirmed],
+				["推进中", document.totals.in_progress],
+				["受阻", document.totals.blocked],
+				["待核对记录", document.totals.needs_review],
+			]) {
 		const card = element("article");
 		card.append(element("span", label), element("strong", count));
 		stats.append(card);
 	}
 	root.append(stats);
+	let legacyRoot = root;
+	if (hasAutomatic) {
+		const work = reportSection("自动记录的任务、结果与耗时");
+		work.append(element("p", automatic.time_note, "hint"));
+		for (const record of automatic.records) {
+			if (
+				$("report-focus-only").checked &&
+				record.archived &&
+				record.status !== "blocked"
+			)
+				continue;
+			work.append(
+				window.worklogLedger.readonlyCard(record, document.detail === "full"),
+			);
+		}
+		root.append(work);
+		legacyRoot = element("details", undefined, "manual-report-appendix");
+		legacyRoot.open = document.detail === "full";
+		legacyRoot.append(element("summary", "人工修订与使用统计附录（可选）"));
+		root.append(legacyRoot);
+	}
 	const focus = reportSection("优先关注这些地方");
 	focus.append(
 		element(
@@ -280,8 +310,8 @@ function renderReport(document) {
 				);
 			section.append(card);
 		}
-		root.append(section);
-		if (status === "confirmed") root.append(focus);
+		legacyRoot.append(section);
+		if (status === "confirmed") legacyRoot.append(focus);
 	}
 	const next = reportSection("下一步");
 	for (const action of document.next_steps)
@@ -293,7 +323,7 @@ function renderReport(document) {
 		);
 	if (!document.next_steps.length)
 		next.append(element("p", "尚未记录下一步，不自动补造计划。", "hint"));
-	root.append(next);
+	legacyRoot.append(next);
 	if (document.timeline.length > 1) {
 		const trend = reportSection("每天的工作记录分布");
 		trend.append(
@@ -332,7 +362,7 @@ function renderReport(document) {
 				"hint",
 			),
 		);
-		root.append(trend);
+		legacyRoot.append(trend);
 	}
 	const appendix = reportSection("记录范围与口径");
 	appendix.append(
@@ -345,7 +375,7 @@ function renderReport(document) {
 	for (const note of document.coverage_notes)
 		appendix.append(element("p", note, "summary-warning"));
 	appendix.append(element("p", document.limitations, "hint"));
-	root.append(appendix);
+	legacyRoot.append(appendix);
 }
 $("report-focus-only").addEventListener("change", () => {
 	if (window.worklogReport) renderReport(window.worklogReport);
