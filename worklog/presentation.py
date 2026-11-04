@@ -20,8 +20,21 @@ def topic_name(titles):
     return ''
 
 
+def session_label(db, session, titles, source, first, zone, linked=None):
+    """Display name for a conversation: manual, linked task, topic excerpt, then source/time."""
+    named = db.execute('SELECT name,origin FROM session_names WHERE session=?', (session,)).fetchone()
+    if named and named['name']:
+        return named['name'], named['origin']
+    if linked:
+        return linked, 'task'
+    topic = topic_name(titles)
+    if topic:
+        return topic, 'excerpt'
+    local_time = datetime.fromtimestamp(first, ZoneInfo(zone)).strftime('%H:%M')
+    return f'{str(source).capitalize()} · {local_time} 的协作', 'metadata'
+
+
 def decorate_sessions(db, data):
-    names = {row['session']: dict(row) for row in db.execute('SELECT * FROM session_names')}
     deferred = deferred_sessions(db, data['date'], data['timezone'])
     ignored = ignored_sessions(db)
     linked = {}
@@ -32,11 +45,7 @@ def decorate_sessions(db, data):
         session['ignored'] = session['session'] in ignored
         session['deferred'] = (session['session'] in deferred and session['session'] not in linked
                                and not session['ignored'])
-        named = names.get(session['session'])
-        topic = topic_name(session['titles'])
-        local_time = datetime.fromtimestamp(session['first'], ZoneInfo(data['timezone'])).strftime('%H:%M')
-        session['display_name'] = (named['name'] if named else linked.get(session['session']) or topic
-                                   or f'{session["source"].capitalize()} · {local_time} 的协作')
-        session['name_source'] = (named['origin'] if named else 'task' if session['session'] in linked
-                                  else 'excerpt' if topic else 'metadata')
+        session['display_name'], session['name_source'] = session_label(
+            db, session['session'], session['titles'], session['source'], session['first'],
+            data['timezone'], linked.get(session['session']))
     return data

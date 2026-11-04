@@ -1,4 +1,20 @@
 // Task UI uses only the existing local authenticated API and inert text nodes.
+const ROW_ACCENT = {
+	confirmed: "var(--sage)",
+	in_progress: "var(--blue)",
+	blocked: "var(--accent)",
+	draft: "var(--plum)",
+	pending: "var(--amber)",
+};
+function focusRow(kind, tag = "div", className = "") {
+	const row = element(
+		tag,
+		undefined,
+		className ? `focus-row ${className}` : "focus-row",
+	);
+	row.style.setProperty("--row-accent", ROW_ACCENT[kind] || "var(--line)");
+	return row;
+}
 class TaskBoard {
 	constructor() {
 		this.current = null;
@@ -226,7 +242,7 @@ class TaskBoard {
 			$("task-create").disabled = !value.enabled || this.creating;
 			$("task-settings").textContent = value.enabled
 				? value.llm_enabled
-					? `模型 ${value.provider}/${value.model} · ${value.allow_excerpts ? "脱敏摘录已授权，可能发往云端" : "仅元数据"} · ${value.auto ? `新活动空闲${value.idle_minutes}分钟后自动阶段总结` : "自动模式未启用"} · 今日已执行${value.runs_today}个总结任务 · 不限次数`
+					? `模型 ${value.provider}/${value.model} · ${value.allow_excerpts ? "脱敏摘录已授权，可能发往云端" : "仅元数据"} · ${value.auto ? `会话结束或空闲${value.idle_minutes}分钟后自动记录` : "自动模式未启用"} · 今日已执行${value.runs_today}个总结任务 · 不限次数`
 					: "可直接手动记录；需要 AI 草稿时，在“模型与授权”中启用。"
 				: "本地任务服务不可用。";
 			this.pending = value.tasks.some(
@@ -290,7 +306,7 @@ class TaskBoard {
 		if (filter === "needs_review")
 			return Boolean(task.review_focus?.needs_review) && !task.archived;
 		if (filter === "archived") return Boolean(task.archived);
-		if (filter === "all") return true;
+		if (filter === "all") return !task.archived; // Archived work is closed; it stays out of the source/revision workspace.
 		return task.review?.status === filter && !task.archived;
 	}
 	filteredTasks(tasks) {
@@ -739,7 +755,10 @@ class TaskBoard {
 			$("task-focus").append(empty);
 		}
 		for (const task of actionable.slice(0, 5)) {
-			const row = element("article", undefined, "focus-row");
+			const kind = task.review_focus?.updated_since_review
+				? "draft"
+				: task.review?.status || "draft";
+			const row = focusRow(kind, "article");
 			const state = task.review_focus?.updated_since_review
 				? "新草稿待核对"
 				: task.review
@@ -749,12 +768,7 @@ class TaskBoard {
 					: "待审阅";
 			row.append(
 				element("strong", task.title),
-				statusBadge(
-					state,
-					task.review_focus?.updated_since_review
-						? "draft"
-						: task.review?.status || "draft",
-				),
+				statusBadge(state, kind),
 			);
 			if (task.review_focus?.updated_since_review)
 				row.append(
@@ -872,7 +886,7 @@ class TaskBoard {
 			heading.id = "inbox-heading";
 			$("task-focus").append(heading);
 			for (const session of untriaged.slice(0, 5)) {
-				const row = element("div", undefined, "focus-row");
+				const row = focusRow("pending");
 				const head = element("div", undefined, "section-head");
 				head.append(element("strong", sessionName(session)));
 				const actions = element("div", undefined, "task-actions");
@@ -933,7 +947,7 @@ class TaskBoard {
 				),
 			);
 			for (const session of deferred) {
-				const row = element("div", undefined, "focus-row");
+				const row = focusRow("pending", "div", "quiet");
 				row.append(
 					element("span", sessionName(session)),
 					this.button("恢复待整理", () => this.deferSession(session, false)),
@@ -951,7 +965,7 @@ class TaskBoard {
 				element("summary", `已忽略 · ${ignored.length}（不再自动生成任务）`),
 			);
 			for (const session of ignored) {
-				const row = element("div", undefined, "focus-row");
+				const row = focusRow("pending", "div", "quiet");
 				row.append(
 					element("span", sessionName(session)),
 					this.button("恢复", () => this.ignoreSession(session, false)),

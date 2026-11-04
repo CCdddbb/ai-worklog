@@ -118,9 +118,21 @@ function renderTimeDistribution(value) {
 			? ` 另有 ${workDuration(unattributed)} 的观察区间尚未归因，可能来自未总结活动或证据缺口。`
 			: "");
 }
+const LEDGER_ACCENT = {
+	blocked: "var(--accent)",
+	in_progress: "var(--blue)",
+	confirmed: "var(--sage)",
+	reported_resolved: "var(--sage)",
+	discussed: "var(--amber)",
+	draft: "var(--plum)",
+};
 function workRecordCard(record, { controls = true, full = false } = {}) {
 	const card = element("article", undefined, "panel ledger-record");
 	card.dataset.recordId = record.id;
+	card.style.setProperty(
+		"--ledger-accent",
+		LEDGER_ACCENT[record.status] || "var(--line)",
+	);
 	const head = element("div", undefined, "section-head");
 	head.append(
 		element("h3", record.title),
@@ -326,7 +338,7 @@ class WorkLedger {
 			.map((issue) => reasons[issue.code] || `部分任务需检查：${issue.code}`)
 			.join("；");
 		$("automation-state").textContent = value.enabled
-			? `自动记录已开启 · 已跟踪 ${value.sources} 条对话，待整理 ${value.pending_events} 段对话 · 空闲 ${value.idle_minutes} 分钟后更新，持续对话每 15 分钟可阶段更新 · ${value.queued} 批总结处理中${value.reason ? ` · ${value.reason}` : ""}`
+			? `自动记录已开启 · 已跟踪 ${value.sources} 条对话，待整理 ${value.pending_events} 段对话 · 会话结束或空闲 ${value.idle_minutes} 分钟后自动记录一次 · ${value.queued} 批总结处理中${value.reason ? ` · ${value.reason}` : ""}`
 			: value.reason ||
 				"尚未开启自动整理。一次授权后自动识别任务、总结结果、计时与归档，不需要逐项填报。";
 		$("automation-budget").textContent =

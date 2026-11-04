@@ -25,13 +25,35 @@ outcome说明证据明确报告的结果/已解决问题；没有结果证据必
 必须输出且仅输出JSON：
 {"schema_version":2,"overview":{"text":"用2到4句概括主要工作、结果与重要未完成项","evidence_ids":["e_真实ID"]},"work_items":[{"title":"具体工作主题","problem":{"text":"问题或目标及其影响","evidence_ids":["e_真实ID"]},"actions":[{"text":"具体处理措施及关键变化","evidence_ids":["e_真实ID"]}],"outcome":{"text":"助手报告的结果及解决的问题","evidence_ids":["e_真实ID"]},"verification":null,"remaining":[],"status":"reported_resolved"}]}
 根对象仅这3个字段；work_items每项允许title/problem/actions/outcome/verification/remaining/status和category、continuation_id字段。continuation_id只能引用conversation_context中真实存在的id，同一批不可重复引用；没有明确延续关系时省略该字段。它用于跨日更新分项，不是证据引用。category按工作实质选择feature（功能开发）、bugfix（修复问题）、refactor（重构优化）、testing（测试验证）、docs（文档）、design（方案讨论）、ops（部署运维）、other，不按调用的工具分类。
-problem为证据条目；actions和remaining为证据条目数组；outcome和verification可为null或证据条目。
+problem为证据条目；actions和remaining都是证据条目数组，每一项都必须写成{"text":"具体内容","evidence_ids":["e_真实ID"]}对象，remaining非空时也不例外，禁止写成裸字符串或只给evidence_ids；outcome和verification可为null或证据条目。非空remaining的写法示例："remaining":[{"text":"8081端口仍被占用，尚未释放","evidence_ids":["e_真实ID"]}]。
 证据条目仅text和evidence_ids，每条引用1到24个实际ID，且必须是支持该句的可读正文，不能引用只有工具状态或空文本的事件。
 status只允许reported_resolved（有明确解决报告）、in_progress（实际处理但尚未完成）、blocked（有明确失败/阻塞）、discussed（仅讨论/设计/方案评估，未实施）。明确只讨论桌面方案且未写代码时必须用discussed；可以在outcome写形成的方案结论，但不能声称已实现。最多8项，每项actions最多6条、remaining最多6条，单条不超过250字。'''
 
 
 class SummaryError(RuntimeError):
     pass
+
+
+REPAIRABLE = frozenset({'invalid_json', 'invalid_schema', 'invalid_citation', 'invalid_text',
+                        'invalid_output', 'missing_outcome', 'business_summary_required',
+                        'context_only_summary', 'non_content_citation', 'status_conflict',
+                        'missing_verification'})
+
+
+def repair_note(error):
+    return ('上一次输出没有通过本地校验（' + str(error) + '）。请只重新输出修正后的完整JSON：'
+            'remaining与actions的每一项都必须是{"text":"...","evidence_ids":["e_真实ID"]}对象，'
+            '不要输出解释、Markdown代码块或额外字段。')
+
+
+def with_repair(generate, snapshot, mode, cancel):
+    """One bounded re-ask; a schema slip must not discard the whole batch."""
+    try:
+        return generate(snapshot, mode, cancel)
+    except SummaryError as error:
+        if str(error) not in REPAIRABLE:
+            raise
+        return generate(dict(snapshot, repair_note=repair_note(error)), mode, cancel)
 
 
 def default_model():
@@ -246,6 +268,9 @@ class PiRunner:
                 '--system-prompt', SYSTEM]
 
     def __call__(self, snapshot, mode, cancel):
+        return with_repair(self.generate, snapshot, mode, cancel)
+
+    def generate(self, snapshot, mode, cancel):
         if snapshot.get('evidence_version') == 2:
             from .evidence import require_evidence
             require_evidence(snapshot)

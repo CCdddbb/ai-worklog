@@ -97,6 +97,37 @@ class CodeBuddyTests(unittest.TestCase):
         with self.assertRaisesRegex(SummaryError, 'invalid_codebuddy_stream'):
             self.runner.parse('not json', self.snapshot)
 
+    def test_invalid_schema_is_reasked_once_with_a_repair_note(self):
+        payloads = []
+        def call(args, payload, cwd, cancel, timeout, env):
+            payloads.append(json.loads(payload))
+            value = ({'overview': {'text': 'x', 'evidence_ids': ['e_fixture']}, 'work': 'not a list'}
+                     if len(payloads) == 1 else result_value())
+            messages = wire_messages()
+            messages[1]['message']['content'] = [{'type': 'text', 'text': json.dumps(value)}]
+            messages[2]['result'] = json.dumps(value)
+            return '\n'.join(json.dumps(item) for item in messages)
+        with patch('worklog.codebuddy.routing_settings', return_value={}), \
+                patch('worklog.codebuddy.run_bounded', side_effect=call):
+            result, _ = self.runner(self.snapshot, 'stage', threading.Event())
+        self.assertEqual(result, result_value())
+        self.assertEqual(len(payloads), 2)
+        self.assertNotIn('repair_note', payloads[0])
+        self.assertIn('invalid_schema', payloads[1]['repair_note'])
+
+    def test_non_schema_failures_are_not_reasked(self):
+        calls = []
+        def call(args, payload, cwd, cancel, timeout, env):
+            calls.append(payload)
+            messages = wire_messages()
+            messages[0]['mcp_servers'] = [{'name': 'unwanted'}]
+            return '\n'.join(json.dumps(item) for item in messages)
+        with patch('worklog.codebuddy.routing_settings', return_value={}), \
+                patch('worklog.codebuddy.run_bounded', side_effect=call), \
+                self.assertRaisesRegex(SummaryError, 'tools_forbidden'):
+            self.runner(self.snapshot, 'stage', threading.Event())
+        self.assertEqual(len(calls), 1)
+
     def test_settings_copy_only_routing_not_credentials_hooks_or_plugins(self):
         with tempfile.TemporaryDirectory() as root:
             path = Path(root) / '.codebuddy'

@@ -8,11 +8,11 @@
 }
 :root {
 	color-scheme: light;
-	--bg: #f4f1ec;
-	--panel: #fefdfb;
-	--ink: #2b2723;
-	--muted: #7a7268;
-	--line: #e9e3d9;
+	--bg: #f2eee8;
+	--panel: #fffdfb;
+	--ink: #26221e;
+	--muted: #746b60;
+	--line: #e6dfd4;
 	--accent: #c2542a;
 	--accent-ink: #9a3f1e;
 	--sage: #4d7c5a;
@@ -20,11 +20,15 @@
 	--plum: #8b6fb8;
 	--amber: #b8863b;
 	--accent-soft: #f6e7dd;
-	--panel-deep: #f8f5f0;
+	--panel-deep: #f7f3ed;
 	--radius-sm: 4px;
 	--radius-md: 6px;
 	--radius-lg: 8px;
 	--radius-xl: 12px;
+	--radius-panel: 14px;
+	--shadow-sm: 0 1px 2px #2b272308;
+	--shadow-md: 0 1px 2px #2b27230a, 0 10px 24px -18px #2b27232e;
+	--shadow-lg: 0 2px 6px #2b27230d, 0 24px 48px -28px #2b27233d;
 	--curve: cubic-bezier(0.22, 1, 0.36, 1);
 	--dur-fast: 200ms;
 	--dur-base: 300ms;
@@ -34,9 +38,8 @@
 }
 body {
 	margin: 0;
-	background:
-		radial-gradient(#e5ddd0 1px, transparent 1.2px) 0 0 / 26px 26px fixed,
-		var(--bg);
+	background: linear-gradient(180deg, #f7f4ef 0%, var(--bg) 42%, #ebe5db 100%)
+		fixed;
 	color: var(--ink);
 	font:
 		14px / 20px "Manrope",
@@ -138,7 +141,7 @@ aside {
 	inset: 0 auto 0 0;
 	width: 216px;
 	padding: 32px 16px 24px;
-	background: #faf7f1;
+	background: #fbf9f5;
 	border-right: 1px solid var(--line);
 	display: flex;
 	flex-direction: column;
@@ -187,9 +190,11 @@ nav button {
 	gap: 12px;
 	border: 0;
 	background: transparent;
-	padding: 12px 16px;
+	padding: 11px 14px 11px 11px;
 	text-align: left;
 	color: #6d655a;
+	border-radius: var(--radius-lg);
+	border-left: 3px solid transparent;
 }
 nav button:hover {
 	background: #f1ece3;
@@ -197,6 +202,7 @@ nav button:hover {
 nav button.active {
 	color: var(--accent-ink);
 	background: var(--accent-soft);
+	border-left-color: var(--accent);
 	font-weight: 500;
 }
 .nav-icon {
@@ -312,10 +318,11 @@ header p {
 	display: grid;
 	grid-template-columns: repeat(3, minmax(0, 1fr));
 	margin-bottom: 28px;
-	background: #fff;
+	background: var(--panel);
 	border: 1px solid var(--line);
-	border-radius: 8px;
+	border-radius: var(--radius-panel);
 	padding: 24px 0;
+	box-shadow: var(--shadow-md);
 }
 .overview-stats article {
 	padding: 0 28px;
@@ -340,9 +347,10 @@ header p {
 	min-width: 0;
 	background: var(--panel);
 	border: 1px solid var(--line);
-	border-radius: 8px;
+	border-radius: var(--radius-panel);
 	padding: 24px;
 	margin-bottom: 24px;
+	box-shadow: var(--shadow-md);
 }
 .section-head {
 	display: flex;
@@ -388,12 +396,24 @@ header p {
 	font-size: 12px;
 }
 .focus-row {
-	padding: 16px 0;
-	border-bottom: 1px solid #efe9df;
+	padding: 14px 16px 14px 13px;
+	margin-bottom: 10px;
+	border: 1px solid var(--line);
+	border-left: 3px solid var(--row-accent, var(--line));
+	border-radius: var(--radius-xl);
+	background: var(--panel);
+	box-shadow: var(--shadow-sm);
 	overflow-wrap: anywhere;
+	transition:
+		box-shadow var(--dur-fast) var(--curve),
+		transform var(--dur-fast) var(--curve);
+}
+.focus-row:hover {
+	box-shadow: var(--shadow-md);
+	transform: translateY(-1px);
 }
 .focus-row:last-child {
-	border-bottom: 0;
+	margin-bottom: 0;
 }
 .focus-row strong {
 	margin-right: 12px;
@@ -402,6 +422,16 @@ header p {
 }
 .focus-row p {
 	margin: 6px 0 0;
+}
+.focus-row.quiet {
+	padding: 8px 12px;
+	margin-bottom: 6px;
+	background: var(--panel-deep);
+	box-shadow: none;
+}
+.focus-row.quiet:hover {
+	transform: none;
+	box-shadow: var(--shadow-sm);
 }
 .stats {
 	display: grid;
@@ -412,8 +442,9 @@ header p {
 .stats article {
 	padding: 20px;
 	border: 1px solid var(--line);
-	border-radius: 8px;
+	border-radius: var(--radius-panel);
 	background: var(--panel);
+	box-shadow: var(--shadow-md);
 }
 .stats span {
 	font-size: 12px;
@@ -884,7 +915,9 @@ footer {
 #task-evidence-summary {
 	padding: 20px;
 	border: 1px solid var(--line);
-	border-radius: 8px;
+	border-radius: var(--radius-panel);
+	background: var(--panel);
+	box-shadow: var(--shadow-sm);
 	margin-top: 20px;
 }
 #task-preview-details {
@@ -1260,8 +1293,10 @@ footer {
 .report-focus-row {
 	padding: 16px;
 	margin: 12px 0;
-	background: #f9f1e2;
-	border-radius: 8px;
+	background: var(--panel-deep);
+	border: 1px solid var(--line);
+	border-left: 3px solid var(--accent);
+	border-radius: var(--radius-xl);
 	overflow-wrap: anywhere;
 }
 .report-work-item,
@@ -1334,10 +1369,12 @@ footer {
 	flex-shrink: 0;
 }
 .review-focus {
-	background: #f9f1e2;
+	background: var(--panel-deep);
+	border: 1px solid var(--line);
+	border-left: 3px solid var(--accent);
 	padding: 16px;
 	margin: 12px 0;
-	border-radius: 8px;
+	border-radius: var(--radius-xl);
 }
 .review-focus summary {
 	cursor: pointer;
@@ -1381,6 +1418,12 @@ footer {
 		display: block;
 		padding: 0;
 		border: 0;
+		box-shadow: none;
+	}
+	.panel,
+	.report-focus-row,
+	.review-focus,
+	#task-evidence-summary {
 		box-shadow: none;
 	}
 	#report-preview > h2 {
@@ -1453,7 +1496,15 @@ footer {
 	margin: 12px 0;
 }
 @media (prefers-reduced-motion: reduce) {
-	button {
+	button,
+	.focus-row,
+	.task-list-item,
+	.project-node {
 		transition: none;
+	}
+	.focus-row:hover,
+	.task-list-item:hover,
+	.project-node:hover {
+		transform: none;
 	}
 }

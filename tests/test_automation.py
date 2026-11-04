@@ -186,6 +186,63 @@ class AutomationTests(unittest.TestCase):
         self.assertFalse(self.service.allow_excerpts)
         self.assertIn('来源', self.service.automation_status()['reason'])
 
+    def test_task_is_recorded_only_after_the_conversation_settles(self):
+        from worklog.core import identity
+        live = identity(self.key, 'pi', 'live')[:16]
+        self.service.configure_automation(True, 'today', True, 3)
+        self.wait(lambda: self.records()['stats']['total'] == 2)
+        self.append('live', 11 * 3600, 'user', '正在讨论部署方案，还没有结束。')
+        self.append('live', 11 * 3600 + 60, 'assistant', '好的，继续下一步。')
+        self.now[0] = START + 11 * 3600 + 90
+        self.ingest()
+        self.service.auto_tick()
+        self.assertFalse([task for task in self.service.list(DAY)['tasks'] if live in task['sessions']])
+        self.now[0] += 240
+        self.service.auto_tick()
+        self.wait(lambda: [task for task in self.service.list(DAY)['tasks'] if live in task['sessions']])
+        task = next(task for task in self.service.list(DAY)['tasks'] if live in task['sessions'])
+        self.assertEqual(task['title'], 'Pi · 11:00 的协作')
+        self.assertNotIn('正在识别', task['title'])
+        self.wait(lambda: len(self.runner.calls) == 3)
+        self.assertTrue(any(live in {entry['session'] for entry in call['evidence']} for call in self.runner.calls))
+
+    def test_unfinished_turn_waits_and_is_recorded_once_the_conversation_goes_quiet(self):
+        from worklog.core import identity
+        live = identity(self.key, 'pi', 'live')[:16]
+        self.service.configure_automation(True, 'today', True, 3)
+        self.wait(lambda: self.records()['stats']['total'] == 2)
+        self.now[0] = START + 11 * 3600 + 90
+        self.append('live', 11 * 3600, 'user', '正在讨论部署方案。')
+        self.append('live', 11 * 3600 + 60, 'toolResult', 'PRIVATE_TOOL_OUTPUT')
+        self.ingest()
+        self.service.auto_tick()
+        self.assertFalse([task for task in self.service.list(DAY)['tasks'] if live in task['sessions']])
+        self.now[0] = START + 12 * 3600  # Pi closed mid-turn: quiet time is enough to record it.
+        self.service.auto_tick()
+        self.wait(lambda: [task for task in self.service.list(DAY)['tasks'] if live in task['sessions']])
+
+    def test_legacy_placeholder_task_titles_are_renamed(self):
+        from worklog.automation import PLACEHOLDER_TITLE, rename_placeholder_tasks
+        from worklog.core import identity
+        login = identity(self.key, 'pi', 'login')[:16]
+        self.service.configure_automation(True, 'today', True, 3)
+        self.wait(lambda: self.records()['stats']['total'] == 2)
+        db = connect(self.db)
+        with db:
+            db.execute('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?)',
+                       ('a' * 32, PLACEHOLDER_TITLE, DAY, json.dumps([login]), START + 9 * 3600, None, 'open', START))
+        db.close()
+        db = connect(self.db)
+        try:
+            with db:
+                self.assertEqual(rename_placeholder_tasks(db, 'UTC'), 1)
+            renamed = db.execute('SELECT title FROM tasks WHERE id=?', ('a' * 32,)).fetchone()[0]
+            self.assertTrue(renamed)
+            self.assertNotEqual(renamed, PLACEHOLDER_TITLE)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM tasks WHERE title=?', (PLACEHOLDER_TITLE,)).fetchone()[0], 0)
+        finally:
+            db.close()
+
     def test_failed_digest_not_retried_infinitely_and_pause_keeps_all_records(self):
         self.runner.fail = True
         self.service.configure_automation(True, 'today', True)

@@ -244,6 +244,51 @@ def status(service):
             'note': '自动整理与归档不等于人工验收；暂停会取消待执行自动任务，已发送的请求可能仍会完成。'}
 
 
+TERMINAL_TURN = ('stop', 'length', 'error', 'aborted')
+ABANDONED_SECONDS = 1800  # A turn Pi never finished still counts once the conversation goes quiet.
+
+
+def session_settled(rows, now, idle_seconds):
+    """Only record after the user leaves Pi: a finished turn plus quiet time.
+
+    Pi appends events per message, so an in-flight turn keeps a conversation unsettled;
+    a turn abandoned mid-answer is recorded once it has been silent long enough.
+    """
+    active = [row for row in rows if row['kind'] not in ('usage', 'auxiliary')]
+    if not active:
+        return False
+    quiet = now - active[-1]['ts']
+    if active[-1]['status'] in TERMINAL_TURN:
+        return quiet >= idle_seconds
+    return quiet >= max(idle_seconds, ABANDONED_SECONDS)
+
+
+PLACEHOLDER_TITLE = '正在识别对话中的工作'
+
+
+def rename_placeholder_tasks(db, zone):
+    """One-off: replace old creation placeholders with the conversation's own name."""
+    from .presentation import session_label
+    renamed = 0
+    for row in db.execute('SELECT * FROM tasks WHERE title=?', (PLACEHOLDER_TITLE,)):
+        task = dict(row)
+        titles = [item[0] for item in db.execute(
+            'SELECT title FROM work_records WHERE source_task_id=? ORDER BY updated_at DESC,id', (task['id'],))]
+        if titles:
+            name = titles[0] + (f' 等{len(titles)}项工作' if len(titles) > 1 else '')
+        else:
+            sessions = json.loads(task['sessions'])
+            events = ([dict(item) for item in db.execute('SELECT * FROM events WHERE session=? AND ts>=? ORDER BY ts,id',
+                                                        (sessions[0], task['start_ts']))] if sessions else [])
+            if not events:
+                continue
+            name, _ = session_label(db, sessions[0], [item['title'] for item in events if item['title']],
+                                    events[0]['source'], task['start_ts'], zone)
+        db.execute('UPDATE tasks SET title=? WHERE id=?', (name[:150], task['id']))
+        renamed += 1
+    return renamed
+
+
 def tick(service):
     if not service.auto:
         return
@@ -296,7 +341,14 @@ def tick(service):
                                      and item['status'] == 'open' and service.automation_since <= item['start_ts'] <= first), None)
                         created = task is None
                         if created:
-                            task = service.create('正在识别对话中的工作', [session], day, internal_start=first)
+                            if not session_settled([row for row in rows if row['session'] == session], now, service.idle_seconds):
+                                continue  # Still working in Pi: record once the conversation settles.
+                            from .presentation import session_label
+                            title, _ = session_label(db, session,
+                                                     [row['title'] for row in rows if row['session'] == session and row['title']],
+                                                     next(row['source'] for row in rows if row['session'] == session),
+                                                     first, service.zone)
+                            task = service.create(title, [session], day, internal_start=first)
                         with db:
                             db.execute('INSERT OR IGNORE INTO task_automation VALUES (?,?,?,NULL,NULL,?)',
                                        (task['id'], project, int(created), now))
@@ -321,10 +373,8 @@ def tick(service):
                 rows = service._rows(task)
                 if not rows:
                     continue
-                active = [row for row in rows if row['kind'] not in ('usage', 'auxiliary')]
-                last = active[-1]
-                if last['status'] not in ('stop', 'length', 'error', 'aborted'):
-                    continue
+                if not session_settled(rows, now, service.idle_seconds):
+                    continue  # Still working in Pi: wait for the conversation to settle.
                 material_rows, covered_rows = batch_material(db, task, rows)
                 if not covered_rows:
                     continue
@@ -346,12 +396,7 @@ def tick(service):
                             mark_covered(db, task_id, data, result)
                             db.execute('UPDATE task_automation SET attempt_digest=NULL,last_error=NULL,updated_at=? WHERE task_id=?', (now, task_id))
                         continue
-                since_last = now - (latest['started_at'] or latest['created_at']) if latest else float('inf')
-                if now - last['ts'] < service.idle_seconds and since_last < 900:
-                    continue
-                # New work gets a 3 minute quiet period; an ongoing task can get a 15 minute stage update.
-                if not latest and now - last['ts'] < service.idle_seconds:
-                    continue
+                # A settled conversation is recorded in batches; each batch is one bounded summary call.
                 try:
                     requested = service.request(task_id, 'stage', retry=task_id in service.automatic_retries, automatic_rows=material_rows, covered_rows=covered_rows)
                     service.automatic_retries.discard(task_id)

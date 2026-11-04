@@ -41,6 +41,8 @@
 	margin-bottom: 16px;
 	padding: 24px;
 	overflow-wrap: anywhere;
+	border-left: 3px solid var(--ledger-accent, var(--line));
+	box-shadow: var(--shadow-md);
 }
 #automatic-records .ledger-record {
 	margin-bottom: 0;
@@ -125,7 +127,9 @@
 	display: grid;
 	gap: 12px;
 	border: 1px solid var(--line);
-	border-radius: 8px;
+	border-radius: var(--radius-panel);
+	background: var(--panel);
+	box-shadow: var(--shadow-sm);
 	padding: 16px;
 	font-size: 12px;
 	line-height: 16px;
@@ -144,8 +148,9 @@
 }
 .ledger-empty {
 	padding: 24px;
-	background: var(--bg);
-	border-radius: 8px;
+	background: var(--panel-deep);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-panel);
 	color: var(--muted);
 	font-size: 14px;
 	line-height: 20px;
@@ -169,7 +174,16 @@
 	padding: 16px;
 	margin-top: 12px;
 	border: 1px solid var(--line);
-	border-radius: 8px;
+	border-radius: var(--radius-panel);
+	background: var(--panel);
+	box-shadow: var(--shadow-sm);
+	transition:
+		box-shadow var(--dur-fast) var(--curve),
+		transform var(--dur-fast) var(--curve);
+}
+.project-node:hover {
+	box-shadow: var(--shadow-md);
+	transform: translateY(-1px);
 }
 .project-node > summary {
 	font-size: 14px;
@@ -238,5 +252,13 @@
 	#automatic-stats,
 	#archive-stats {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.project-node {
+		transition: none;
+	}
+	.project-node:hover {
+		transform: none;
 	}
 }

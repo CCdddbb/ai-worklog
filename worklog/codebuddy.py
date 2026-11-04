@@ -12,6 +12,7 @@ from .llm import (
     run_bounded,
     validate_business_result,
     validate_result,
+    with_repair,
 )
 
 DEFAULT_MODEL = 'deepseek-v4.1-flash'
@@ -53,6 +54,9 @@ class CodeBuddyRunner:
                 '--system-prompt', self.system_prompt]
 
     def __call__(self, snapshot, mode, cancel):
+        return with_repair(self.generate, snapshot, mode, cancel)
+
+    def generate(self, snapshot, mode, cancel):
         if snapshot.get('evidence_version') == 2:
             from .evidence import require_evidence
             require_evidence(snapshot)

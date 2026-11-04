@@ -69,6 +69,8 @@ class TaskService:
                 self.automatic_retries.update(upgrade(db))
                 from .conversations import backfill
                 backfill(db)
+                from .automation import rename_placeholder_tasks
+                rename_placeholder_tasks(db, self.zone)
                 for row in db.execute('SELECT t.id,t.sessions FROM tasks t JOIN task_automation a ON a.task_id=t.id'):
                     if len(json.loads(row['sessions'])) != 1:
                         db.execute("UPDATE summaries SET status='interrupted',error='conversation_unit_migrated' WHERE task_id=? AND status='queued'", (row['id'],))
