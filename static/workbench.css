@@ -198,6 +198,79 @@ button.button-quiet:hover {
 #overview .panel {
 	margin-bottom: 16px;
 }
+.time-layout {
+	display: grid;
+	grid-template-columns: 200px minmax(0, 1fr);
+	gap: 24px;
+	align-items: center;
+	margin-top: 16px;
+}
+.time-pie {
+	display: grid;
+	place-items: center;
+}
+.time-donut {
+	display: block;
+	width: 100%;
+	max-width: 200px;
+	height: auto;
+}
+.time-donut-track {
+	fill: none;
+	stroke: var(--line);
+	stroke-width: 22;
+}
+.time-donut-segment {
+	fill: none;
+	stroke-width: 22;
+}
+.time-donut-segment:hover,
+.time-donut-segment:focus {
+	stroke-width: 28;
+	outline: none;
+}
+.time-donut-total {
+	fill: var(--ink);
+	font-size: 18px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+.time-donut-caption {
+	fill: var(--muted);
+	font-size: 12px;
+}
+.time-legend {
+	display: grid;
+	gap: 8px;
+	max-width: 480px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.time-legend-item {
+	display: grid;
+	grid-template-columns: 10px minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 12px;
+	font-size: 14px;
+	line-height: 20px;
+}
+.time-swatch {
+	width: 10px;
+	height: 10px;
+	border-radius: 2px;
+}
+.time-legend-title {
+	overflow-wrap: anywhere;
+}
+.time-legend-value {
+	color: var(--muted);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+#time-note {
+	margin: 12px 0 0;
+}
 #task-focus {
 	scroll-margin-top: 72px;
 	margin-top: 12px;
@@ -380,11 +453,64 @@ button.button-quiet:hover {
 	padding: 1px 4px;
 	font-size: 12px;
 }
-.week-detail-grid {
+.week-metric-label {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 12px;
+	color: var(--muted);
+	white-space: nowrap;
+}
+.week-metric-label select {
+	min-height: 36px;
+	padding: 6px 10px;
+	font-size: 13px;
+}
+.week-trend {
+	margin-top: 24px;
+	padding-top: 20px;
+	border-top: 1px solid var(--line);
+}
+.week-trend h3 {
+	margin: 0;
+	font-size: 14px;
+}
+.week-trend .hint {
+	margin: 4px 0 0;
+}
+.week-followup-list {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-	gap: 20px;
-	align-items: start;
+	gap: 8px;
+	margin-top: 16px;
+}
+.week-followup-item {
+	display: grid;
+	gap: 6px;
+	width: 100%;
+	padding: 12px 16px;
+	text-align: left;
+	background: #faf7f2;
+}
+.week-followup-item:hover {
+	border-color: #c9a58f;
+	background: #f6efe6;
+}
+.week-followup-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+.week-followup-title {
+	font-size: 14px;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+.week-followup-note {
+	font-size: 13px;
+	line-height: 1.6;
+	color: var(--muted);
+	overflow-wrap: anywhere;
 }
 .week-day {
 	padding: 16px 0 0;
@@ -480,15 +606,19 @@ button.button-quiet:hover {
 		flex: 1 0 135px;
 		scroll-snap-align: start;
 	}
-	.week-detail-grid {
-		grid-template-columns: minmax(0, 1fr);
-		gap: 0;
-	}
 	.week-card-hint {
 		display: block;
 	}
 }
 @media (max-width: 700px) {
+	.time-layout {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 16px;
+	}
+	.time-pie {
+		max-width: 180px;
+		margin-inline: auto;
+	}
 	aside {
 		padding: 12px 16px 0;
 	}
@@ -565,6 +695,13 @@ button.button-quiet:hover {
 	}
 	.trend-label {
 		font-size: 20px;
+	}
+	.week-followup-item {
+		padding: 12px;
+	}
+	.week-followup-head {
+		flex-wrap: wrap;
+		gap: 6px;
 	}
 }
 .task-page-tools {

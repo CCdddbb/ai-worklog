@@ -71,9 +71,10 @@ class WeekBoard {
 				"week-work-chart",
 				"week-usage-chart",
 				"week-days",
-				"week-recap",
+				"week-followup-list",
 			])
 				$(id).replaceChildren();
+			$("week-followup").classList.add("hidden");
 			$("week-notice").textContent = error.message;
 			$("week-error").textContent = error.message;
 			$("week-error").classList.remove("hidden");
@@ -314,8 +315,7 @@ class WeekBoard {
 		this.cards();
 		this.charts();
 		$("week-days").replaceChildren();
-		$("week-recap").replaceChildren();
-		let recapCount = 0;
+		const followups = [];
 		for (const [index, day] of value.days.entries()) {
 			const details = element(
 				"details",
@@ -377,25 +377,8 @@ class WeekBoard {
 						),
 					);
 				details.append(row);
-				if (
-					task.status === "reported_resolved" ||
-					task.status === "confirmed" ||
-					task.status === "blocked" ||
-					task.next_steps
-				) {
-					recapCount++;
-					const recap = element("details", undefined, "week-task");
-					recap.append(
-						element(
-							"summary",
-							`${day.date} · ${task.title} · ${weekStates[task.status]}`,
-						),
-						element("p", task.outcome || "待补充"),
-					);
-					if (task.next_steps)
-						recap.append(element("p", `后续：${task.next_steps}`, "hint"));
-					$("week-recap").append(recap);
-				}
+				if (task.status === "blocked" || task.next_steps)
+					followups.push({ day, task });
 			}
 			const open = element("button", "查看当天记录");
 			open.type = "button";
@@ -403,10 +386,59 @@ class WeekBoard {
 			details.append(open);
 			$("week-days").append(details);
 		}
-		if (!recapCount)
-			$("week-recap").append(
-				element("p", "本周尚无人工成果、阻塞或后续事项。", "hint"),
+		this.followups(followups);
+	}
+	followups(items) {
+		const list = $("week-followup-list");
+		list.replaceChildren();
+		// Same title across days is one follow-up: keep the most recent record.
+		const latest = new Map();
+		for (const item of items) latest.set(item.task.title, item);
+		const rows = [...latest.values()];
+		$("week-followup").classList.toggle("hidden", !rows.length);
+		if (!rows.length) return;
+		rows.sort(
+			(a, b) =>
+				Number(b.task.status === "blocked") -
+				Number(a.task.status === "blocked"),
+		);
+		for (const { day, task } of rows) {
+			const row = element("button", undefined, "week-followup-item");
+			row.type = "button";
+			row.setAttribute(
+				"aria-label",
+				`${day.date} ${task.title}，${weekStates[task.status]}，跳到当天进展`,
 			);
+			const head = element("span", undefined, "week-followup-head");
+			head.append(
+				element(
+					"span",
+					`${day.date.slice(5)} · ${task.title}`,
+					"week-followup-title",
+				),
+				statusBadge(
+					weekStates[task.status],
+					task.status === "unreviewed" ? "draft" : task.status,
+				),
+			);
+			row.append(head);
+			row.append(
+				element(
+					"span",
+					task.status === "blocked"
+						? task.outcome || "受阻，待确认解除条件"
+						: `后续：${task.next_steps}`,
+					"week-followup-note",
+				),
+			);
+			row.addEventListener("click", () => {
+				this.selectDay(day.date);
+				$("week-days")
+					.closest(".panel")
+					?.scrollIntoView({ block: "start", behavior: "smooth" });
+			});
+			list.append(row);
+		}
 	}
 }
 window.worklogWeek = new WeekBoard();

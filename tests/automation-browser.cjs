@@ -82,6 +82,19 @@ async function main() {
 		await page.locator("#automatic-records").textContent(),
 		/活跃估计/,
 	);
+	assert.equal(await page.locator("#time-panel").isVisible(), true);
+	assert.equal(await page.locator("#time-legend .time-legend-item").count(), 2);
+	assert.equal(await page.locator("#time-pie svg.time-donut").count(), 1);
+	assert.match(await page.locator("#time-total").textContent(), /分钟/);
+	assert.match(await page.locator("#time-note").textContent(), /不是工时/);
+	assert.match(
+		await page.locator("#time-pie svg.time-donut").getAttribute("aria-label"),
+		/活跃时长分布/,
+	);
+	assert.equal(
+		await page.locator("#time-pie .time-donut-segment").count(),
+		2,
+	);
 	let data = await get("/api/work-records?date=2026-10-28");
 	assert.equal(data.stats.total, 2);
 	assert.equal(data.stats.archived, 2);

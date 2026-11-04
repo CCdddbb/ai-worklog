@@ -56,6 +56,7 @@ let browser;
 	await page.waitForFunction(
 		() => document.querySelector("#date").value === "2026-10-28",
 	);
+	assert.equal(await page.locator("#time-panel").isVisible(), false);
 	await page.locator("[data-view=weekly]").click();
 	await page.waitForFunction(
 		() => document.querySelectorAll("#week-days > details").length === 7,
@@ -85,9 +86,25 @@ let browser;
 		await page.locator("#week-days > details").nth(5).textContent(),
 		/未记录/,
 	);
+	assert.equal(await page.locator("#week-followup").isVisible(), true);
+	assert.equal(
+		await page.locator("#week-followup-list .week-followup-item").count(),
+		3,
+	);
 	assert.match(
-		await page.locator("#week-recap").textContent(),
+		await page.locator("#week-followup-list").textContent(),
+		/虚构：筛选条件回归/,
+	);
+	assert.match(
+		await page.locator("#week-followup-list").textContent(),
 		/仍有两个回归用例失败/,
+	);
+	await page.locator("#week-followup-list .week-followup-item").first().click();
+	assert.equal(
+		await page
+			.locator('#week-work-chart button[data-date="2026-10-30"]')
+			.getAttribute("aria-pressed"),
+		"true",
 	);
 	for (const metric of ["tokens", "requests", "sessions"]) {
 		await page.locator("#week-metric").selectOption(metric);
@@ -178,6 +195,7 @@ let browser;
 	]);
 	assert.equal(await page.locator(".trend-point").count(), 0);
 	assert.equal(await page.locator(".trend-line").count(), 0);
+	assert.equal(await page.locator("#week-followup").isVisible(), false);
 	assert.equal(await page.locator("#week-work-chart button").count(), 7);
 	await page.locator("#week-next").click();
 	await page.waitForFunction(() =>

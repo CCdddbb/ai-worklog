@@ -17,6 +17,117 @@ function ledgerStats(value, root) {
 		root.append(card);
 	}
 }
+const TIME_COLORS = [
+	"#c2542a",
+	"#3e6fa8",
+	"#4d7c5a",
+	"#8b6fb8",
+	"#b8863b",
+	"#7a7268",
+];
+const TIME_SLICES = 6;
+function timeSlices(records) {
+	const totals = new Map();
+	for (const record of records) {
+		const seconds = Math.max(0, Number(record.active_seconds) || 0);
+		if (!seconds) continue;
+		const title = record.title || "未命名工作";
+		totals.set(title, (totals.get(title) || 0) + seconds);
+	}
+	const rows = [...totals.entries()]
+		.map(([title, seconds]) => ({ title, seconds }))
+		.sort((a, b) => b.seconds - a.seconds);
+	if (rows.length > TIME_SLICES) {
+		const rest = rows.slice(TIME_SLICES - 1);
+		rows.splice(TIME_SLICES - 1, rest.length, {
+			title: `其他 ${rest.length} 项`,
+			seconds: rest.reduce((sum, row) => sum + row.seconds, 0),
+		});
+	}
+	return rows;
+}
+function timePercent(seconds, total) {
+	const value = (seconds / total) * 100;
+	return value >= 10 ? Math.round(value) : value.toFixed(1);
+}
+function renderTimeDistribution(value) {
+	const panel = $("time-panel");
+	const rows = timeSlices(value.records || []);
+	const total = rows.reduce((sum, row) => sum + row.seconds, 0);
+	$("time-pie").replaceChildren();
+	$("time-legend").replaceChildren();
+	panel.classList.toggle("hidden", total <= 0);
+	if (total <= 0) return;
+	$("time-total").textContent = workDuration(total);
+	const radius = 60;
+	const circumference = 2 * Math.PI * radius;
+	const svg = svgElement("svg", {
+		viewBox: "0 0 160 160",
+		class: "time-donut",
+		role: "img",
+		"aria-label": `今日 ${rows.length} 项任务的活跃时长分布，共 ${workDuration(total)}；并行区间已去重后分摊`,
+	});
+	svg.append(
+		svgElement("circle", {
+			cx: 80,
+			cy: 80,
+			r: radius,
+			class: "time-donut-track",
+		}),
+	);
+	let offset = 0;
+	rows.forEach((row, index) => {
+		const length = (row.seconds / total) * circumference;
+		const color = TIME_COLORS[index % TIME_COLORS.length];
+		svg.append(
+			svgElement("circle", {
+				cx: 80,
+				cy: 80,
+				r: radius,
+				transform: "rotate(-90 80 80)",
+				class: "time-donut-segment",
+				stroke: color,
+				"stroke-dasharray": `${length} ${circumference - length}`,
+				"stroke-dashoffset": -offset,
+				tabindex: 0,
+				"aria-label": `${row.title} ${workDuration(row.seconds)}，占 ${timePercent(row.seconds, total)}%`,
+			}),
+		);
+		offset += length;
+		const item = element("li", undefined, "time-legend-item");
+		const swatch = element("span", undefined, "time-swatch");
+		swatch.style.background = color;
+		item.append(
+			swatch,
+			element("span", row.title, "time-legend-title"),
+			element(
+				"span",
+				`${workDuration(row.seconds)} · ${timePercent(row.seconds, total)}%`,
+				"time-legend-value",
+			),
+		);
+		$("time-legend").append(item);
+	});
+	svg.append(
+		svgElement(
+			"text",
+			{ x: 80, y: 76, "text-anchor": "middle", class: "time-donut-total" },
+			workDuration(total),
+		),
+		svgElement(
+			"text",
+			{ x: 80, y: 96, "text-anchor": "middle", class: "time-donut-caption" },
+			"活跃估计",
+		),
+	);
+	$("time-pie").append(svg);
+	const unattributed = Number(value.stats?.unattributed_seconds) || 0;
+	$("time-note").textContent =
+		`${rows.length} 项任务共 ${workDuration(total)}；不是工时，也不是绩效依据。` +
+		(unattributed > 0
+			? ` 另有 ${workDuration(unattributed)} 的观察区间尚未归因，可能来自未总结活动或证据缺口。`
+			: "");
+}
 function workRecordCard(record, { controls = true, full = false } = {}) {
 	const card = element("article", undefined, "panel ledger-record");
 	card.dataset.recordId = record.id;
@@ -305,6 +416,7 @@ class WorkLedger {
 				}
 			if (!archive) {
 				this.lastDayTotal = value.stats.total;
+				renderTimeDistribution(value);
 				document
 					.querySelector(".automatic-workbench")
 					.classList.toggle(
@@ -373,8 +485,10 @@ class WorkLedger {
 						: "");
 			}
 		} catch (error) {
-			if (serial === this.serial)
+			if (serial === this.serial) {
+				if (!archive) $("time-panel").classList.add("hidden");
 				notice.textContent = `自动任务读取失败：${error.message} 已有记录不会因此删除。`;
+			}
 		}
 	}
 	readonlyCard(record, full = false) {

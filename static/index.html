@@ -32,7 +32,8 @@
 </div>
 <section class="panel focus-panel"><div class="section-head"><h2>需要你处理</h2><details class="home-tools"><summary>更多</summary><button type="button" id="name-sessions" class="button-quiet">提取主题名称</button></details></div><p class="hint">今日共 <span id="overview-tasks">—</span> 条工作记录。先核对新结论、阻塞和未整理会话。</p><div id="task-focus" class="task-focus" aria-live="polite">正在读取工作…</div></section>
 <section class="panel"><div class="section-head"><h2>今日成果</h2><button type="button" id="open-week" class="button-quiet">查看本周 →</button></div><div id="overview-outcomes"></div><details class="status-overview"><summary id="progress-caption">工作状态概览</summary><div id="task-progress" class="task-progress" role="img" aria-label="任务状态分布"></div><div id="progress-legend" class="progress-legend"></div></details></section>
-</div><details class="panel" id="summary-panel"><summary class="summary-panel-toggle">AI 草稿与总结设置 <span id="summary-count" class="hint"></span></summary>
+</div><section class="panel time-panel hidden" id="time-panel"><div class="section-head"><div><h2>今日时长分布</h2><p class="hint">按活跃估计比较每个任务投入的时长，不是工时；并行区间已去重后分摊。</p></div><span class="badge" id="time-total">—</span></div><div class="time-layout"><div class="time-pie" id="time-pie"></div><div class="time-legend" id="time-legend"></div></div><p class="hint" id="time-note" role="status"></p></section>
+<details class="panel" id="summary-panel"><summary class="summary-panel-toggle">AI 草稿与总结设置 <span id="summary-count" class="hint"></span></summary>
 <div class="section-head"><h2>工作草稿</h2><button type="button" id="summary-start" class="button-ai">生成总结</button></div><p id="summary-facts" class="hint"></p><div id="summary-content"></div>
 <details class="summary-help" id="summary-help"><summary>模型与正文授权设置</summary><p class="hint">设置本身不调用模型。生成草稿需另行确认；脱敏不能保证清除商业秘密。</p><label class="summary-model-label">总结模型<select id="summary-backend"><option value="codebuddy">CodeBuddy · DeepSeek Flash</option><option value="pi">Pi 默认模型</option></select></label><label class="consent-choice"><input type="checkbox" id="summary-excerpts">允许把受限脱敏摘录发送给所选模型（可能包含敏感信息）</label><div class="summary-controls"><button type="button" id="summary-enable" class="button-ai">启用 AI 总结</button><span id="summary-config" class="hint">正在检查模型状态…</span></div></details><p id="summary-notice" role="status" class="hint"></p></details>
 </section>
@@ -40,11 +41,9 @@
 <section id="weekly" class="view hidden">
 <div class="panel section-head week-toolbar"><button type="button" id="week-prev" class="button-quiet">← 上一周</button><div><h2 id="week-range">本周记录</h2><p id="week-zone" class="hint"></p></div><div class="task-actions"><button type="button" id="week-today">回到本周</button><button type="button" id="week-next" class="button-quiet">下一周 →</button></div></div>
 <p id="week-error" class="hidden error" role="alert"></p><div id="week-stats" class="stats"></div>
-<section class="panel"><div class="section-head"><div><h2>这一周，每天在做什么</h2><p class="hint">点选一天查看进展，再进入当天继续整理。</p></div></div><p class="hint week-card-hint">横向滑动选择周一至周日</p><section id="week-work-chart" class="week-day-cards" aria-label="七日工作记录"></section></section>
-<div class="week-detail-grid"><section class="panel"><h2>当天的工作进展</h2><div id="week-days" aria-live="polite"></div></section>
-<section class="panel"><div class="section-head"><div><h2>AI 使用趋势</h2><p class="hint">只连接连续有记录的日期；缺口不是零，使用量不是工时或成果。</p></div><label>指标<select id="week-metric"><option value="tokens">Token</option><option value="requests">AI 回复</option><option value="sessions">会话</option></select></label></div><div id="week-usage-chart"></div></section>
-</div>
-<details class="panel"><summary>本周成果与后续事项</summary><div id="week-recap"></div></details>
+<section class="panel"><div class="section-head"><div><h2>这一周，每天在做什么</h2><p class="hint">点选一天查看进展，再进入当天继续整理。</p></div><label class="week-metric-label">趋势指标<select id="week-metric"><option value="tokens">Token</option><option value="requests">AI 回复</option><option value="sessions">会话</option></select></label></div><p class="hint week-card-hint">横向滑动选择周一至周日</p><section id="week-work-chart" class="week-day-cards" aria-label="七日工作记录"></section><div class="week-trend"><h3>AI 使用趋势</h3><p class="hint">只连接连续有记录的日期；缺口不是零，使用量不是工时或成果。</p><div id="week-usage-chart"></div></div></section>
+<section class="panel"><div class="section-head"><div><h2>当天的工作进展</h2><p class="hint">只显示上方选中的日期，切换日期不会丢失本周其他记录。</p></div></div><div id="week-days" aria-live="polite"></div></section>
+<section class="panel hidden" id="week-followup"><div class="section-head"><div><h2>本周待跟进</h2><p class="hint">只汇总受阻和写了下一步的记录，同名任务跨日只显示最近一条；没有这类记录时整块隐藏。</p></div></div><div id="week-followup-list" class="week-followup-list"></div></section>
 <details class="week-scope"><summary class="scope-toggle">统计范围与缺口</summary><p id="week-notice" role="status" class="hint">正在读取周记录…</p></details>
 </section>
 <section id="usage" class="view hidden">
