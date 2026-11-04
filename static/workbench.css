@@ -35,14 +35,26 @@ header h1 {
 	margin-bottom: 16px;
 	font-size: 12px;
 }
-button.primary {
+button.primary,
+button.button-primary {
 	background: var(--accent);
 	border-color: var(--accent);
 	box-shadow: 0 2px 4px #c2542a1f;
 }
-button.primary:hover {
+button.primary:hover,
+button.button-primary:hover {
 	background: #9a3f1e;
 	border-color: #9a3f1e;
+}
+button.button-danger {
+	background: #fff;
+	color: #a3341f;
+	border-color: #e0b9a3;
+}
+button.button-danger:hover {
+	background: #fbeae3;
+	border-color: #c98d70;
+	color: #8a2a18;
 }
 button.button-ai {
 	background: var(--draft-bg);
@@ -770,6 +782,21 @@ button.button-quiet:hover {
 }
 .review-archive {
 	font-weight: 600;
+}
+.review-footer .review-delete {
+	flex: none;
+}
+.ignored-sessions {
+	border-top: 1px solid var(--line);
+	padding-top: 16px;
+	margin-top: 16px;
+}
+.ignored-sessions > summary {
+	cursor: pointer;
+	color: var(--muted);
+}
+.ignored-sessions .focus-row {
+	color: var(--muted);
 }
 @media (max-width: 1050px) {
 	.task-workspace {

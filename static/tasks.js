@@ -488,6 +488,12 @@ class TaskBoard {
 				this.batchPending,
 			),
 			this.button(
+				"删除所选",
+				() => this.deleteSelected(),
+				this.batchPending,
+				"danger",
+			),
+			this.button(
 				"清除选择",
 				() => {
 					this.batchSelection.clear();
@@ -530,6 +536,69 @@ class TaskBoard {
 		} finally {
 			this.batchPending = false;
 			this.renderBatchBar();
+		}
+	}
+	async deleteSelected() {
+		if (this.batchPending) return;
+		const ids = [...this.batchSelection];
+		if (!ids.length) return;
+		const chosen = (this.tasks || []).filter((task) => ids.includes(task.id));
+		const sessions = new Set(chosen.flatMap((task) => task.sessions));
+		const message = `删除所选的 ${ids.length} 项工作？\n\n任务、AI 草稿、人工审阅和自动记录会一起删除；${
+			sessions.size
+				? `${sessions.size} 个来源对话会被忽略，不再自动生成任务，可在会话列表恢复。`
+				: "这些记录没有来源对话。"
+		}此操作不可撤销。`;
+		if (!confirm(message)) return;
+		this.batchPending = true;
+		this.renderBatchBar();
+		try {
+			const value = await (
+				await api("/api/task-delete", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ task_ids: ids }),
+				})
+			).json();
+			for (const id of ids) this.drafts.delete(id);
+			this.batchSelection.clear();
+			if (ids.includes(this.selectedTaskId)) this.selectedTaskId = null;
+			this.indexSignature = null;
+			this.notice(
+				`已删除 ${value.deleted} 项工作，忽略 ${value.ignored_sessions.length} 个来源对话。`,
+			);
+			await this.refresh();
+		} catch (error) {
+			this.notice(`删除失败：${error.message}`);
+		} finally {
+			this.batchPending = false;
+			this.renderBatchBar();
+		}
+	}
+	async deleteTask(task) {
+		if (this.savingReviews.has(task.id))
+			return this.notice("保存请求正在处理，请稍后再删除。");
+		const count = task.sessions.length;
+		const message = `删除“${task.title}”？\n\n任务、AI 草稿、人工审阅和 ${number(task.record_count)} 条自动记录会一起删除；${
+			count
+				? `${count} 个来源对话会被忽略，不再自动生成任务，可在会话列表恢复。`
+				: "这条记录没有来源对话。"
+		}此操作不可撤销。`;
+		if (!confirm(message)) return;
+		try {
+			await api("/api/task-delete", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ task_ids: [task.id] }),
+			});
+			this.drafts.delete(task.id);
+			this.batchSelection.delete(task.id);
+			if (this.selectedTaskId === task.id) this.selectedTaskId = null;
+			this.indexSignature = null;
+			this.notice(`已删除：${task.title}`);
+			await this.refresh();
+		} catch (error) {
+			this.notice(`删除失败：${error.message}`);
 		}
 	}
 	selectTask(id) {
@@ -613,6 +682,23 @@ class TaskBoard {
 		});
 		await load();
 	}
+	async ignoreSession(session, ignored) {
+		try {
+			await api("/api/session-ignore", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ session: session.session, ignored }),
+			});
+			this.notice(
+				ignored
+					? `已忽略“${sessionName(session)}”，不再自动生成任务。`
+					: `已恢复“${sessionName(session)}”的自动记录。`,
+			);
+			await load();
+		} catch (error) {
+			this.notice(`操作失败：${error.message}`);
+		}
+	}
 	beginTriage() {
 		const task =
 			this.tasks?.find((item) => item.review_focus?.needs_review) ||
@@ -632,7 +718,9 @@ class TaskBoard {
 		if (
 			!actionable.length &&
 			(tasks.length ||
-				!this.current.sessions.some((session) => !session.deferred))
+				!this.current.sessions.some(
+					(session) => !session.deferred && !session.ignored,
+				))
 		) {
 			const empty = element("div", undefined, "focus-empty");
 			empty.append(
@@ -764,7 +852,10 @@ class TaskBoard {
 			: "开始整理";
 		const assigned = new Set(tasks.flatMap((task) => task.sessions));
 		const untriaged = (this.current?.sessions || []).filter(
-			(session) => !assigned.has(session.session) && !session.deferred,
+			(session) =>
+				!assigned.has(session.session) &&
+				!session.deferred &&
+				!session.ignored,
 		);
 		$("overview-tasks").textContent = number(this.totalTasks ?? tasks.length);
 		const limited = this.totalTasks > tasks.length;
@@ -792,6 +883,12 @@ class TaskBoard {
 					this.button(
 						"暂不整理",
 						() => this.deferSession(session, true),
+						false,
+						"quiet",
+					),
+					this.button(
+						"忽略此对话",
+						() => this.ignoreSession(session, true),
 						false,
 						"quiet",
 					),
@@ -840,6 +937,24 @@ class TaskBoard {
 				row.append(
 					element("span", sessionName(session)),
 					this.button("恢复待整理", () => this.deferSession(session, false)),
+				);
+				details.append(row);
+			}
+			$("task-focus").append(details);
+		}
+		const ignored = (this.current?.sessions || []).filter(
+			(session) => session.ignored && !assigned.has(session.session),
+		);
+		if (ignored.length) {
+			const details = element("details", undefined, "ignored-sessions");
+			details.append(
+				element("summary", `已忽略 · ${ignored.length}（不再自动生成任务）`),
+			);
+			for (const session of ignored) {
+				const row = element("div", undefined, "focus-row");
+				row.append(
+					element("span", sessionName(session)),
+					this.button("恢复", () => this.ignoreSession(session, false)),
 				);
 				details.append(row);
 			}
@@ -1441,6 +1556,13 @@ class TaskBoard {
 			archive.classList.add("review-archive");
 			footer.append(archive);
 		}
+		const remove = this.button(
+			"删除记录",
+			() => this.deleteTask(task),
+			false,
+			"danger",
+		);
+		remove.classList.add("review-delete");
 		const discard = this.button("撤销未保存修订", () => {
 			if (this.savingReviews.has(task.id))
 				return this.notice(
@@ -1471,7 +1593,7 @@ class TaskBoard {
 			this.reconcileTasks(this.tasks || []);
 		});
 		discard.classList.add("review-discard", "button-quiet");
-		footer.append(discard, feedback);
+		footer.append(discard, feedback, remove);
 		form.insertBefore(footer, wrappers.outcome);
 		return form;
 	}

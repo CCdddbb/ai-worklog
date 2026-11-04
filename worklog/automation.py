@@ -270,11 +270,14 @@ def tick(service):
                                       (max(start, service.automation_since), now, end)):
                     item = dict(row)
                     grouped[(day, item['project'])].append(item)
-            from .triage import deferred_sessions
+            from .triage import deferred_sessions, ignored_sessions
+            ignored = ignored_sessions(db)
             managed = set()
             for (day, project), rows in grouped.items():
                 deferred = deferred_sessions(db, day, service.zone)
-                sessions = list(dict.fromkeys(row['session'] for row in rows if row['session'] not in deferred))
+                sessions = list(dict.fromkeys(row['session'] for row in rows
+                                              if row['session'] not in deferred
+                                              and row['session'] not in ignored))
                 existing = [dict(row) for row in db.execute('SELECT * FROM tasks WHERE day=? ORDER BY created_at', (day,))]
                 for session in sessions:
                     first = min(row['ts'] for row in rows if row['session'] == session)

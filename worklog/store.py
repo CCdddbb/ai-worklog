@@ -98,6 +98,8 @@ def connect(path):
     db.execute('''CREATE TABLE IF NOT EXISTS session_triage (
         session TEXT, day TEXT, zone TEXT, digest TEXT NOT NULL, updated_at REAL NOT NULL,
         PRIMARY KEY(session,day,zone))''')
+    db.execute('''CREATE TABLE IF NOT EXISTS ignored_sessions (
+        session TEXT PRIMARY KEY, ignored_at REAL NOT NULL)''')
     db.execute('''CREATE TABLE IF NOT EXISTS activity_revisions (
         source TEXT, day TEXT, zone TEXT, digest TEXT NOT NULL, PRIMARY KEY(source,day,zone))''')
     db.execute('''CREATE TABLE IF NOT EXISTS automation_scans (

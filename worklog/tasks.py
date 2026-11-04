@@ -365,6 +365,81 @@ class TaskService:
         finally:
             db.close()
 
+    def ignore_session(self, session, ignored):
+        from .triage import ignore_session
+        db = connect(self.path)
+        try:
+            return ignore_session(db, session, ignored, self.clock())
+        finally:
+            db.close()
+
+    def delete(self, task_ids):
+        """Remove records for work that should not exist, and ignore its conversations."""
+        if not isinstance(task_ids, list) or not 1 <= len(task_ids) <= 50:
+            raise ValueError('Select 1 to 50 tasks')
+        if len(set(task_ids)) != len(task_ids) or any(
+                not isinstance(item, str) or not re.fullmatch(r'[a-f0-9]{32}', item) for item in task_ids):
+            raise ValueError('Invalid task IDs')
+        db = connect(self.path)
+        try:
+            tasks = []
+            for task_id in task_ids:
+                row = db.execute('SELECT * FROM tasks WHERE id=?', (task_id,)).fetchone()
+                if not row:
+                    raise ValueError('Task not found')
+                tasks.append(dict(row))
+            sessions = []
+            with db:
+                for task in tasks:
+                    sessions.extend(self._purge_task(db, task))
+                keep = set()
+                for row in db.execute('SELECT sessions FROM tasks'):
+                    keep.update(json.loads(row[0]))
+                now = self.clock()
+                ignored = []
+                for session in dict.fromkeys(sessions):
+                    if session in keep:
+                        continue
+                    self._purge_conversation(db, session)
+                    db.execute('INSERT OR REPLACE INTO ignored_sessions VALUES (?,?)', (session, now))
+                    db.execute('DELETE FROM session_triage WHERE session=?', (session,))
+                    ignored.append(session)
+            return {'deleted': len(tasks), 'ignored_sessions': ignored}
+        finally:
+            db.close()
+
+    def _purge_task(self, db, task):
+        task_id = task['id']
+        records = [row[0] for row in db.execute(
+            'SELECT id FROM work_records WHERE source_task_id=?', (task_id,))]
+        jobs = [row[0] for row in db.execute('SELECT id FROM summaries WHERE task_id=?', (task_id,))]
+        if records:
+            marks = ','.join('?' for _ in records)
+            db.execute(f'DELETE FROM work_record_history WHERE record_id IN ({marks})', records)
+            db.execute(f'DELETE FROM work_record_sessions WHERE record_id IN ({marks})', records)
+            db.execute(f'DELETE FROM conversation_part_records WHERE record_id IN ({marks})', records)
+            db.execute(f'DELETE FROM legacy_shared_records WHERE record_id IN ({marks})', records)
+        db.execute('DELETE FROM work_records WHERE source_task_id=?', (task_id,))
+        if jobs:
+            marks = ','.join('?' for _ in jobs)
+            db.execute(f'DELETE FROM conversation_projection_jobs WHERE job_id IN ({marks})', jobs)
+            db.execute(f'DELETE FROM conversation_progress WHERE job_id IN ({marks})', jobs)
+        for table in ('summaries', 'task_reviews', 'task_git', 'automatic_coverage',
+                      'task_automation', 'conversation_sources'):
+            db.execute(f'DELETE FROM {table} WHERE task_id=?', (task_id,))
+        db.execute('DELETE FROM tasks WHERE id=?', (task_id,))
+        return json.loads(task['sessions'])
+
+    def _purge_conversation(self, db, session):
+        """Drop derived conversation projections; source events are never touched."""
+        parts = [row[0] for row in db.execute(
+            'SELECT id FROM conversation_parts WHERE session=?', (session,))]
+        if parts:
+            marks = ','.join('?' for _ in parts)
+            db.execute(f'DELETE FROM conversation_part_records WHERE part_id IN ({marks})', parts)
+            db.execute(f'DELETE FROM conversation_progress WHERE part_id IN ({marks})', parts)
+        db.execute('DELETE FROM conversation_parts WHERE session=?', (session,))
+
     def configure_summary(self, allow_excerpts, backend=None):
         if type(allow_excerpts) is not bool:
             raise ValueError('Explicit excerpt consent required')

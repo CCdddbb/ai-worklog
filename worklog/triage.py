@@ -6,6 +6,27 @@ from .core import bounds
 from .evidence import activity_digest
 
 
+def ignored_sessions(db):
+    """Conversations explicitly excluded from automatic capture until restored."""
+    return {row[0] for row in db.execute('SELECT session FROM ignored_sessions')}
+
+
+def ignore_session(db, session, ignored, now):
+    if not isinstance(session, str) or not re.fullmatch(r'[a-f0-9]{16}', session):
+        raise ValueError('Invalid session')
+    if type(ignored) is not bool:
+        raise TypeError('Explicit ignore state required')
+    if ignored and not db.execute('SELECT 1 FROM events WHERE session=? LIMIT 1', (session,)).fetchone():
+        raise ValueError('Unknown session')
+    with db:
+        if ignored:
+            db.execute('INSERT OR REPLACE INTO ignored_sessions VALUES (?,?)', (session, now))
+            db.execute('DELETE FROM session_triage WHERE session=?', (session,))
+        else:
+            db.execute('DELETE FROM ignored_sessions WHERE session=?', (session,))
+    return {'session': session, 'ignored': ignored}
+
+
 def deferred_sessions(db, day, zone):
     start, end = bounds(day, zone)
     saved = {row['session']: row['digest'] for row in db.execute(
