@@ -143,19 +143,28 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(self.wait(retried['id'])['status'], 'success')
         self.assertEqual(len(self.runner.calls), 2)
 
-    def test_daily_budget_and_worker_ownership(self):
+    def test_unlimited_summaries_preserve_worker_ownership(self):
         self.service.daily_limit = 1
         task = self.create()
         job = self.service.request(task['id'])
         self.wait(job['id'])
-        with self.assertRaises(ValueError):
-            self.service.request(task['id'], 'final')
+        final = self.service.request(task['id'], 'final')
+        self.assertEqual(self.wait(final['id'])['status'], 'success')
         with self.assertRaises(ValueError):
             TaskService(self.db, FakeRunner())
         with self.assertRaises(ValueError):
             main(['purge', '--db', str(self.db), '--summaries-only'])
 
-    def test_old_queued_jobs_cannot_bypass_todays_execution_budget(self):
+    def test_more_than_one_hundred_jobs_can_be_queued_without_an_artificial_limit(self):
+        with self.service.guard:
+            for index in range(105):
+                task = self.create()
+                self.assertFalse(self.service.request(task['id'])['cached'])
+            db = connect(self.db)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM summaries').fetchone()[0], 105)
+            db.close()
+
+    def test_old_queued_jobs_execute_without_a_daily_cap(self):
         task = self.create()
         with self.service.guard:
             first = self.service.request(task['id'], 'stage')
@@ -167,12 +176,12 @@ class TaskTests(unittest.TestCase):
             self.service.daily_limit = 1
             self.service._one_job()
             self.service._one_job()
-            self.assertEqual(len(self.runner.calls), 1)
+            self.assertEqual(len(self.runner.calls), 2)
             db = connect(self.db)
-            self.assertEqual(db.execute('SELECT status FROM summaries WHERE id=?', (second['id'],)).fetchone()[0], 'queued')
+            self.assertEqual(db.execute('SELECT status FROM summaries WHERE id=?', (second['id'],)).fetchone()[0], 'success')
             db.close()
         self.assertEqual(self.wait(first['id'])['status'], 'success')
-        self.assertEqual(self.service.list(DAY)['runs_today'], 1)
+        self.assertEqual(self.service.list(DAY)['runs_today'], 2)
 
     def test_invalid_sessions_and_start_scope_are_rejected(self):
         with self.assertRaises(ValueError):
