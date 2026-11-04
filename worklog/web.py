@@ -118,7 +118,7 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
             if not self.access(mutation=True):
                 return
             path = urlsplit(self.path).path
-            if path not in ['/api/tasks', '/api/summarize', '/api/task-review',
+            if path not in ['/api/tasks', '/api/summarize', '/api/task-review', '/api/task-archive',
                             '/api/summary-settings', '/api/session-names', '/api/session-rename', '/api/session-triage', '/api/automation', '/api/work-record', '/api/automation-retry']:
                 self.send(404, {'error': 'not_found'})
                 return
@@ -173,10 +173,17 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                                                  body.get('date', day), body.get('start_time', '00:00'))
                     self.send(201, result)
                 elif path == '/api/task-review':
-                    if set(body) != {'task_id', 'status', 'outcome', 'learnings', 'next_steps', 'verification', 'commit_ids'}:
+                    if set(body) - {'archive'} != {'task_id', 'status', 'outcome', 'learnings', 'next_steps', 'verification', 'commit_ids'}:
                         raise ValueError('Invalid review fields')
+                    if 'archive' in body and type(body['archive']) is not bool:
+                        raise ValueError('Invalid archive state')
                     self.send(200, task_service.review(body['task_id'], body['status'], body['outcome'],
-                        body['learnings'], body['next_steps'], body['verification'], body['commit_ids']))
+                        body['learnings'], body['next_steps'], body['verification'], body['commit_ids'],
+                        body.get('archive')))
+                elif path == '/api/task-archive':
+                    if set(body) != {'task_ids', 'archived'} or type(body['archived']) is not bool:
+                        raise ValueError('Invalid archive request')
+                    self.send(200, task_service.archive(body['task_ids'], body['archived']))
                 else:
                     if set(body) - {'task_id', 'mode', 'retry'} or type(body.get('retry', False)) is not bool:
                         raise ValueError('Unknown fields')
@@ -190,6 +197,7 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                     '/api/summary-settings': '无法更新模型设置。请确认没有排队/运行中的总结，并检查 CodeBuddy CLI 登录或 Pi CLI 默认模型；摘录需要已配置来源。',
                     '/api/session-rename': '名称需为 1–80 个字符，且会话必须已导入。',
                     '/api/task-review': '结果、验证、下一步和经验每项最多 2000 字；已确认状态需填写结果，关联提交须属于任务当日。',
+                    '/api/task-archive': '一次可归档 1–50 项已存在的任务；归档状态必须是明确的布尔值。',
                     '/api/session-triage': '只能暂存所选日期内尚未关联任务的会话；可随时恢复，有新活动会重新提醒。',
                     '/api/session-names': '请确认本地主题提取授权、日期和来源目录。',
                 }

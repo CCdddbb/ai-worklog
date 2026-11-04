@@ -25,6 +25,14 @@ open "dist/AI Worklog.app"
 
 生成后可把 `AI Worklog.app` 拖到「应用程序」，之后直接点击图标打开，不再复制带令牌的地址。App 使用原生 AppKit + WKWebView，不依赖浏览器或 Electron。
 
+### 开发模式（不重新打包）
+
+```bash
+./bin/dev-app
+```
+
+`dev-app` 让已构建的 App 直接读取仓库源码：改 `worklog/*.py` 约 1.5 秒后自动重启本地服务，改 `static/` 自动刷新页面，无需重新 `build-macos-app` 或退出重开。数据仍在 App 运行期间每 30 秒导入一次、页面每 30 秒刷新。首次使用仍需先执行一次 `./bin/build-macos-app` 生成 `dist/AI Worklog.app`。
+
 这是**当前 CPU 架构的本地预览包**，采用临时签名，不是已公证的互联网发行包。Python 运行时未内置，仍需已安装 Python 3.9+；模型总结另需已登录的 Pi 或 CodeBuddy CLI。不能宣称是任意 Mac 都可直接安装的独立发行版。
 
 ### 启动与数据

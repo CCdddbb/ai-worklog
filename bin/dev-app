@@ -1,0 +1,13 @@
+#!/bin/bash
+# Run the macOS shell against the repository source instead of the copied
+# app bundle. Python edits restart the local backend in place; static asset
+# edits reload the page. No rebuild and no quit/reopen needed.
+set -euo pipefail
+ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd)"
+APP="$ROOT/dist/AI Worklog.app/Contents/MacOS/AIWorklog"
+if [[ ! -x "$APP" ]]; then
+  echo 'Build once first: ./bin/build-macos-app' >&2
+  exit 1
+fi
+export WORKLOG_SOURCE="$ROOT"
+exec "$APP" "$@"

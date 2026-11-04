@@ -694,6 +694,83 @@ button.button-quiet:hover {
 .review-footer .review-feedback:empty {
 	display: none;
 }
+.task-list-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+.task-list-row .task-list-item {
+	flex: 1;
+	margin-bottom: 0;
+	min-width: 0;
+}
+.task-list-row.selected .task-list-item {
+	border-color: var(--accent);
+	background: #f9f1ea;
+}
+.task-select {
+	margin-top: 14px;
+	width: 16px;
+	height: 16px;
+	accent-color: var(--accent);
+	flex: none;
+}
+.task-batch {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 10px;
+	margin-bottom: 10px;
+	border: 1px solid #e0b9a3;
+	border-radius: 6px;
+	background: #f9f1ea;
+	font-size: 12px;
+}
+.task-batch-count {
+	font-weight: 600;
+	color: var(--accent-ink);
+}
+.task-batch button {
+	font-size: 12px;
+	padding: 4px 10px;
+	min-height: 28px;
+}
+.task-source-summary {
+	margin: 8px 0 4px;
+	font-size: 12px;
+	color: var(--muted);
+}
+.task-source-summary > summary {
+	cursor: pointer;
+}
+.task-source-summary .source-session {
+	display: grid;
+	gap: 2px;
+	padding: 8px 0;
+	border-top: 1px solid var(--line);
+}
+.task-source-summary .source-session small {
+	color: var(--muted);
+}
+.review-archived-note {
+	grid-column: 1 / -1;
+	margin: 0;
+	padding: 8px 10px;
+	border-radius: 6px;
+	background: #efe9df;
+	color: #5a5248;
+}
+.review-feedback.is-success {
+	color: #3f6b4a;
+}
+.review-feedback.is-error {
+	color: #a3341f;
+}
+.review-archive {
+	font-weight: 600;
+}
 @media (max-width: 1050px) {
 	.task-workspace {
 		grid-template-columns: minmax(0, 1fr);

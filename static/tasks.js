@@ -17,6 +17,8 @@ class TaskBoard {
 		this.creationByDay = new Map();
 		this.taskFilter = "all";
 		this.creating = false;
+		this.batchSelection = new Set();
+		this.batchPending = false;
 		this.taskDataLoaded = false;
 		this.lastReadError = false;
 		$("task-new").addEventListener("click", () => this.openCreation());
@@ -286,8 +288,10 @@ class TaskBoard {
 	}
 	matchesFilter(task, filter) {
 		if (filter === "needs_review")
-			return Boolean(task.review_focus?.needs_review);
-		return filter === "all" || task.review?.status === filter;
+			return Boolean(task.review_focus?.needs_review) && !task.archived;
+		if (filter === "archived") return Boolean(task.archived);
+		if (filter === "all") return true;
+		return task.review?.status === filter && !task.archived;
 	}
 	filteredTasks(tasks) {
 		const query = $("task-search").value.trim().toLocaleLowerCase("zh-CN");
@@ -307,6 +311,7 @@ class TaskBoard {
 			["blocked", "受阻"],
 			["confirmed", "已确认"],
 			["in_progress", "进行中"],
+			["archived", "已归档"],
 		]) {
 			const count = tasks.filter((task) =>
 				this.matchesFilter(task, filter),
@@ -336,16 +341,19 @@ class TaskBoard {
 				: "");
 		const signature = JSON.stringify([
 			this.selectedTaskId,
+			[...this.batchSelection].sort(),
 			filtered.map((task) => [
 				task.id,
 				task.title,
 				task.review?.status,
 				task.review?.outcome,
+				task.archived,
 				task.review_focus,
 				task.summary?.status,
 				this.drafts.has(task.id),
 			]),
 		]);
+		this.renderBatchBar();
 		if (signature === this.indexSignature) return;
 		this.indexSignature = signature;
 		const list = $("task-index-items");
@@ -355,6 +363,18 @@ class TaskBoard {
 			: null;
 		list.replaceChildren();
 		for (const task of filtered) {
+			const row = element("div", undefined, "task-list-row");
+			const select = element("input", undefined, "task-select");
+			select.type = "checkbox";
+			select.checked = this.batchSelection.has(task.id);
+			select.setAttribute("aria-label", `选择“${task.title}”用于批量归档`);
+			select.addEventListener("change", () => {
+				if (select.checked) this.batchSelection.add(task.id);
+				else this.batchSelection.delete(task.id);
+				row.classList.toggle("selected", select.checked);
+				this.renderBatchBar();
+			});
+			row.classList.toggle("selected", select.checked);
 			const button = this.button("", () => this.selectTask(task.id));
 			button.className = "task-list-item";
 			button.dataset.taskId = task.id;
@@ -366,16 +386,22 @@ class TaskBoard {
 			button.append(
 				element("strong", task.title, "task-item-title"),
 				statusBadge(
-					task.review_focus?.updated_since_review
-						? "新草稿待核对"
-						: task.review
-							? { confirmed: "已确认", blocked: "受阻", in_progress: "进行中" }[
-									task.review.status
-								]
-							: "待审阅",
-					task.review_focus?.updated_since_review
-						? "draft"
-						: task.review?.status || "draft",
+					task.archived
+						? "已归档"
+						: task.review_focus?.updated_since_review
+							? "新草稿待核对"
+							: task.review
+								? {
+										confirmed: "已确认",
+										blocked: "受阻",
+										in_progress: "进行中",
+									}[task.review.status]
+								: "待审阅",
+					task.archived
+						? "pending"
+						: task.review_focus?.updated_since_review
+							? "draft"
+							: task.review?.status || "draft",
 				),
 				element(
 					"span",
@@ -387,7 +413,8 @@ class TaskBoard {
 			);
 			if (this.drafts.has(task.id))
 				button.append(statusBadge("未保存修订", "draft"));
-			list.append(button);
+			row.append(select, button);
+			list.append(row);
 		}
 		if (!filtered.length)
 			list.append(
@@ -404,6 +431,106 @@ class TaskBoard {
 			[...list.querySelectorAll("button")]
 				.find((button) => button.dataset.taskId === focusedId)
 				?.focus({ preventScroll: true });
+	}
+	attentionReasons(task) {
+		const codes = new Set([
+			"invalid_draft",
+			"verification_missing",
+			"discussion_only",
+			"blocked",
+			"manual_verification_missing",
+			"new_draft",
+		]);
+		return (task.review_focus?.issues || []).filter((issue) =>
+			codes.has(issue.code),
+		);
+	}
+	sessionMeta(ids) {
+		const known = new Map(
+			(this.current?.sessions || []).map((session) => [session.session, session]),
+		);
+		return ids.map(
+			(id) =>
+				known.get(id) || {
+					session: id,
+					source: "pi",
+					first: null,
+					last: null,
+					requests: 0,
+					titles: [],
+				},
+		);
+	}
+	renderBatchBar() {
+		const bar = $("task-batch");
+		if (!bar) return;
+		for (const id of [...this.batchSelection])
+			if (!(this.tasks || []).some((task) => task.id === id))
+				this.batchSelection.delete(id);
+		bar.replaceChildren();
+		bar.classList.toggle("hidden", !this.batchSelection.size);
+		if (!this.batchSelection.size) return;
+		bar.append(
+			element(
+				"span",
+				`已选 ${this.batchSelection.size} 项`,
+				"task-batch-count",
+			),
+			this.button(
+				"归档所选",
+				() => this.archiveSelected(true),
+				this.batchPending,
+				"primary",
+			),
+			this.button(
+				"重新打开",
+				() => this.archiveSelected(false),
+				this.batchPending,
+			),
+			this.button(
+				"清除选择",
+				() => {
+					this.batchSelection.clear();
+					this.indexSignature = null;
+					this.reconcileTasks(this.tasks || []);
+				},
+				this.batchPending,
+				"quiet",
+			),
+		);
+	}
+	async archiveSelected(archived) {
+		if (this.batchPending) return;
+		const ids = [...this.batchSelection];
+		if (!ids.length) return;
+		const label = archived ? "归档" : "重新打开";
+		if (
+			!confirm(
+				`将 ${ids.length} 项工作${label}？${
+					archived
+						? "归档会同时结束任务并移出待办，可在“已归档”中重新打开。"
+						: "重新打开会把任务恢复为进行中，并取消本阶段的归档状态。"
+				}`,
+			)
+		)
+			return;
+		this.batchPending = true;
+		this.renderBatchBar();
+		try {
+			await api("/api/task-archive", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ task_ids: ids, archived }),
+			});
+			this.batchSelection.clear();
+			this.notice(`已${label} ${ids.length} 项工作。`);
+			await this.refresh();
+		} catch (error) {
+			this.notice(`${label}失败：${error.message}`);
+		} finally {
+			this.batchPending = false;
+			this.renderBatchBar();
+		}
 	}
 	selectTask(id) {
 		this.selectedTaskId = id;
@@ -857,18 +984,17 @@ class TaskBoard {
 		header.append(
 			element("h3", task.title),
 			statusBadge(
-				task.status === "completed" ? "用户已结束（非验收）" : "任务进行中",
-				task.status === "completed" ? "pending" : "in_progress",
+				task.archived
+					? "已归档"
+					: task.status === "completed"
+						? "用户已结束（非验收）"
+						: "任务进行中",
+				task.archived || task.status === "completed"
+					? "pending"
+					: "in_progress",
 			),
 		);
-		box.append(
-			header,
-			element(
-				"p",
-				`${task.sessions.length} 个会话 · 起始 ${clock(task.start_ts)} · 工作结果由你确认`,
-				"hint",
-			),
-		);
+		box.append(header, this.sourceSummary(task));
 		if (task.review_focus?.issues.length) {
 			const focus = element("details", undefined, "review-focus");
 			focus.open = task.review_focus.needs_review;
@@ -1007,19 +1133,71 @@ class TaskBoard {
 		}
 		if (this.autoEnabled) {
 			const optional = element("details", undefined, "optional-review");
-			optional.open = this.drafts.has(task.id);
+			const attention = this.attentionReasons(task);
+			optional.open =
+				this.drafts.has(task.id) ||
+				(!task.archived && attention.length > 0);
 			optional.append(
-				element("summary", "可选：纠正记录或补充线下工作"),
+				element(
+					"summary",
+					attention.length
+						? `可选：纠正记录或补充线下工作 · ${attention.length} 项待关注`
+						: "可选：纠正记录或补充线下工作",
+				),
 				this.reviewForm(task),
 			);
 			box.append(optional);
 		} else box.append(this.reviewForm(task));
 		return box;
 	}
+	sourceSummary(task) {
+		const details = element("details", undefined, "task-source-summary");
+		const projects = (task.project_names || []).join("、") || "未记录项目";
+		const end = task.end_ts ? `–${clock(task.end_ts)}` : "";
+		details.append(
+			element(
+				"summary",
+				`${projects} · ${task.sessions.length} 个会话 · ${clock(task.start_ts)}${end} · ${number(task.evidence_count)} 条证据`,
+			),
+		);
+		const meta = this.sessionMeta(task.sessions);
+		if (!meta.length)
+			details.append(element("p", "手动记录，没有关联 AI 会话。", "hint"));
+		for (const session of meta) {
+			const row = element("div", undefined, "source-session");
+			row.append(
+				element("strong", sessionName(session)),
+				element(
+					"small",
+					session.first
+						? `${session.source} · ${clock(session.first)}–${clock(session.last)} · ${number(session.requests)} 条回复`
+						: `${session.source} · 来源详情不可用`,
+				),
+				sessionDetails(session),
+			);
+			details.append(row);
+		}
+		details.append(
+			element(
+				"p",
+				"工作结果由你确认；归档只是结项，不等于自动验收。",
+				"hint",
+			),
+		);
+		return details;
+	}
 	reviewForm(task) {
 		const form = element("div", undefined, "review-form");
 		const draft = this.drafts.get(task.id) || task.review || {};
-		form.append(element("h4", "人工审阅与修订"));
+		form.append(element("h4", "人工结论与结项"));
+		if (task.archived)
+			form.append(
+				element(
+					"p",
+					`已归档 · ${number(task.archived_records)} 项自动记录已结束。可在下方重新打开继续跟进。`,
+					"review-archived-note",
+				),
+			);
 		const statusLabel = element("label", "任务状态", "review-field-status");
 		const status = element("select", undefined, "review-status");
 		for (const [value, label] of [
@@ -1084,10 +1262,15 @@ class TaskBoard {
 			"review-feedback hint",
 		);
 		feedback.setAttribute("role", "status");
+		feedback.setAttribute("aria-live", "polite");
+		const setFeedback = (text, kind = "") => {
+			feedback.textContent = text;
+			feedback.className = `review-feedback hint${kind ? ` is-${kind}` : ""}`;
+		};
 		const capture = (event) => {
 			if (event?.target?.classList.contains("review-draft-item")) return;
 			if (feedback.textContent !== "有未保存修订")
-				feedback.textContent = "有未保存修订";
+				setFeedback("有未保存修订");
 			this.drafts.set(task.id, {
 				status: status.value,
 				outcome: fields.outcome.value,
@@ -1147,8 +1330,10 @@ class TaskBoard {
 						.join("\n"),
 				};
 				if (Object.values(next).some((text) => text.length > 2000)) {
-					feedback.textContent =
-						"合并内容超过表单长度限制。请选择单个工作项带入，避免静默截断结果或阻塞。";
+					setFeedback(
+						"合并内容超过表单长度限制。请选择单个工作项带入，避免静默截断结果或阻塞。",
+						"error",
+					);
 					return;
 				}
 				if (
@@ -1164,7 +1349,7 @@ class TaskBoard {
 					fields[key].value = text;
 				status.value = "in_progress";
 				capture();
-				feedback.textContent = "已带入，尚未保存；请核对后选择状态。";
+				setFeedback("已带入，尚未保存；请核对后选择状态。");
 				fields.outcome.focus();
 			});
 			adopt.classList.add("review-adopt", "button-ai");
@@ -1176,48 +1361,86 @@ class TaskBoard {
 			form.insertBefore(controls, wrappers.outcome);
 		}
 		form.append(feedback);
-		const save = this.button("保存人工审阅", async () => {
+		const submit = async (button, archive) => {
 			if (this.savingReviews.has(task.id)) return;
+			if (archive === true) status.value = "confirmed";
+			if (archive === false) status.value = "in_progress";
 			capture();
-			const submitted = this.drafts.get(task.id);
+			const draftRef = this.drafts.get(task.id) || {};
+			const submitted = { ...draftRef };
+			if (archive === true && !(submitted.outcome || "").trim()) {
+				setFeedback(
+					"归档前请先填写工作结果，避免把空结论标成完成。",
+					"error",
+				);
+				fields.outcome.focus();
+				return;
+			}
 			this.savingReviews.add(task.id);
-			let saved = false;
-			save.disabled = true;
+			const original = button.textContent;
+			button.disabled = true;
+			button.textContent =
+				archive === true
+					? "归档中…"
+					: archive === false
+						? "打开中…"
+						: "保存中…";
+			setFeedback("");
+			let ok = false;
 			try {
 				await api("/api/task-review", {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ task_id: task.id, ...submitted }),
+					body: JSON.stringify({
+						task_id: task.id,
+						...submitted,
+						archive,
+					}),
 				});
-				saved = true;
-				if (this.drafts.get(task.id) === submitted) this.drafts.delete(task.id);
-				this.notice(
-					`已保存 ${task.day} · ${task.title} 的人工审阅；报告使用已保存内容，新输入仍需另存。`,
-				);
-				feedback.textContent = this.drafts.has(task.id)
-					? "上次提交已保存，之后的新修改仍未保存。"
-					: "已保存。";
-				save.blur();
+				ok = true;
+				if (this.drafts.get(task.id) === draftRef)
+					this.drafts.delete(task.id);
+				const label =
+					archive === true
+						? "已确认完成并归档"
+						: archive === false
+							? "已重新打开"
+							: "已保存";
+				button.textContent = `${label} ✓`;
+				setFeedback(`${label} · ${clock(Date.now() / 1000)}`, "success");
+				this.notice(`${label}：${task.day} · ${task.title}`);
 				await this.refresh();
+			} catch (error) {
+				setFeedback(`保存失败：${error.message}`, "error");
+				button.textContent = original;
 			} finally {
 				this.savingReviews.delete(task.id);
-				save.disabled = false;
-				const currentCard = $(`task-${task.id}`);
-				const currentSave = currentCard?.querySelector(".review-save");
-				if (currentSave) currentSave.disabled = false;
-				const currentFeedback = currentCard?.querySelector(".review-feedback");
-				if (currentFeedback)
-					currentFeedback.textContent = !saved
-						? "保存未完成，修订仍保留，请重试。"
-						: this.drafts.has(task.id)
-							? "上次提交已保存，后续新文字仍未保存。"
-							: "已保存。";
+				button.disabled = false;
+				if (ok)
+					setTimeout(() => {
+						if (button.isConnected) button.textContent = original;
+					}, 1800);
 			}
-		});
+		};
+		const save = this.button("保存", () => submit(save, null));
+		save.classList.add("review-save");
 		save.disabled = this.savingReviews.has(task.id);
-		save.classList.add("review-save", "primary");
 		const footer = element("div", undefined, "review-footer");
 		footer.append(save);
+		if (task.archived) {
+			const reopen = this.button("重新打开", () => submit(reopen, false));
+			reopen.classList.add("review-reopen");
+			footer.append(reopen);
+		} else {
+			const archive = this.button(
+				"确认完成并归档",
+				() => submit(archive, true),
+				false,
+				"primary",
+			);
+			archive.classList.add("review-archive");
+			footer.append(archive);
+		}
 		const discard = this.button("撤销未保存修订", () => {
 			if (this.savingReviews.has(task.id))
 				return this.notice(
@@ -1243,11 +1466,11 @@ class TaskBoard {
 			for (const check of form.querySelectorAll(".commit-choice input"))
 				check.checked = currentTask.commit_ids.includes(check.value);
 			this.drafts.delete(task.id);
-			feedback.textContent = "已恢复为上次保存的内容。";
+			setFeedback("已恢复为上次保存的内容。");
 			this.notice("已撤销未保存修订，已保存的工作记录未删除。");
 			this.reconcileTasks(this.tasks || []);
 		});
-		discard.classList.add("review-discard");
+		discard.classList.add("review-discard", "button-quiet");
 		footer.append(discard, feedback);
 		form.insertBefore(footer, wrappers.outcome);
 		return form;

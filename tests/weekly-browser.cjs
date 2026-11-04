@@ -195,7 +195,7 @@ let browser;
 	assert.equal(await page.locator("#weekly").isVisible(), true);
 	await page
 		.locator("#week-days > details:not(.hidden)")
-		.getByRole("button", { name: "查看／补充当天记录" })
+		.getByRole("button", { name: "查看当天记录" })
 		.click();
 	await page.waitForFunction(
 		() =>

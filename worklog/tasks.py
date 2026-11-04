@@ -240,6 +240,21 @@ class TaskService:
                 task['review'] = dict(reviewed) if reviewed else None
                 task['commit_ids'] = [linked[0] for linked in db.execute(
                     'SELECT commit_id FROM task_git WHERE task_id=?', (task['id'],))]
+                task['archived'] = task['status'] == 'completed'
+                if task['sessions']:
+                    marks = ','.join('?' for _ in task['sessions'])
+                    task['project_names'] = [row[0] for row in db.execute(
+                        'SELECT DISTINCT p.name FROM events e JOIN projects p ON p.id=e.project '
+                        f'WHERE e.session IN ({marks}) ORDER BY p.name', task['sessions'])][:3]
+                else:
+                    task['project_names'] = []
+                task['evidence_count'] = db.execute(
+                    'SELECT COUNT(*) FROM automatic_coverage WHERE task_id=?', (task['id'],)).fetchone()[0]
+                task['record_count'] = db.execute(
+                    'SELECT COUNT(*) FROM work_records WHERE source_task_id=?', (task['id'],)).fetchone()[0]
+                task['archived_records'] = db.execute(
+                    'SELECT COUNT(*) FROM work_records WHERE source_task_id=? AND archived_at IS NOT NULL',
+                    (task['id'],)).fetchone()[0]
                 job = db.execute('SELECT id,mode,status,error,provider,model,created_at,finished_at,output_json,usage_json '
                                  'FROM summaries WHERE task_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1', (task['id'],)).fetchone()
                 saved = db.execute("SELECT id,output_json,input_json,created_at,finished_at FROM summaries WHERE task_id=? AND status='success' "
@@ -269,10 +284,12 @@ class TaskService:
         finally:
             db.close()
 
-    def review(self, task_id, status, outcome, learnings='', next_steps='', verification='', commit_ids=None):
+    def review(self, task_id, status, outcome, learnings='', next_steps='', verification='', commit_ids=None, archive=None):
         task = self._task(task_id)
         if status not in ('confirmed', 'in_progress', 'blocked'):
             raise ValueError('Invalid review status')
+        if archive is not None and type(archive) is not bool:
+            raise ValueError('Invalid archive state')
         fields = [outcome, learnings, next_steps, verification]
         if any(not isinstance(value, str) or len(value) > 2000 for value in fields):
             raise ValueError('Invalid review text')
@@ -302,7 +319,49 @@ class TaskService:
                             verification.strip(), self.clock()))
                 db.execute('DELETE FROM task_git WHERE task_id=?', (task_id,))
                 db.executemany('INSERT INTO task_git VALUES (?,?)', [(task_id, item) for item in commit_ids])
-            return {'task_id': task_id, 'status': status, 'commit_ids': commit_ids}
+                if archive is True:
+                    self._set_archived(db, task, True)
+                elif archive is False:
+                    self._set_archived(db, task, False)
+            current = db.execute('SELECT status FROM tasks WHERE id=?', (task_id,)).fetchone()[0]
+            return {'task_id': task_id, 'status': status, 'commit_ids': commit_ids,
+                    'archived': current == 'completed'}
+        finally:
+            db.close()
+
+    def _set_archived(self, db, task, archived):
+        """Keep the human review, the task and the automatic ledger in one state."""
+        now = self.clock()
+        if archived:
+            _, day_end = bounds(task['day'], self.zone)
+            end = task['end_ts'] if task['end_ts'] is not None else min(now, day_end)
+            db.execute("UPDATE tasks SET status='completed',end_ts=? WHERE id=?", (end, task['id']))
+            db.execute('UPDATE work_records SET archived_at=COALESCE(archived_at,?),updated_at=? '
+                       'WHERE source_task_id=?', (now, now, task['id']))
+        else:
+            db.execute("UPDATE tasks SET status='open' WHERE id=?", (task['id'],))
+            db.execute('UPDATE work_records SET archived_at=NULL,updated_at=? '
+                       'WHERE source_task_id=? AND archived_at IS NOT NULL', (now, task['id']))
+
+    def archive(self, task_ids, archived):
+        if not isinstance(task_ids, list) or not 1 <= len(task_ids) <= 50:
+            raise ValueError('Select 1 to 50 tasks')
+        if type(archived) is not bool:
+            raise ValueError('Invalid archive state')
+        if len(set(task_ids)) != len(task_ids) or any(not isinstance(item, str) or not re.fullmatch(r'[a-f0-9]{32}', item) for item in task_ids):
+            raise ValueError('Invalid task IDs')
+        db = connect(self.path)
+        try:
+            tasks = []
+            for task_id in task_ids:
+                row = db.execute('SELECT * FROM tasks WHERE id=?', (task_id,)).fetchone()
+                if not row:
+                    raise ValueError('Task not found')
+                tasks.append(dict(row))
+            with db:
+                for task in tasks:
+                    self._set_archived(db, task, archived)
+            return {'archived': archived, 'count': len(tasks)}
         finally:
             db.close()
 

@@ -11,6 +11,9 @@ final class WorklogApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
     var stdoutBuffer = ""
     var generation = 0
     var launchTimer: Timer?
+    var watcher: Timer?
+    var lastPythonFingerprint = ""
+    var lastStaticFingerprint = ""
     let smoke = CommandLine.arguments.contains("--smoke-test")
     let testDB: String? = {
         let args = CommandLine.arguments
@@ -67,6 +70,18 @@ final class WorklogApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
         return support.appendingPathComponent("AI Worklog/worklog.sqlite3")
     }
 
+    // WORKLOG_SOURCE points at the repository root for development, so Python and
+    // static assets are read from source instead of the copied app bundle.
+    var sourceRoot: URL {
+        if let path = ProcessInfo.processInfo.environment["WORKLOG_SOURCE"], !path.isEmpty {
+            let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+            if FileManager.default.fileExists(atPath: url.appendingPathComponent("worklog/desktop.py").path) { return url }
+        }
+        return Bundle.main.resourceURL!
+    }
+
+    var devMode: Bool { sourceRoot != Bundle.main.resourceURL }
+
     func python() -> String? {
         // Finder launches with a minimal PATH. Probe installed runtimes without a login shell.
         let candidates = [ProcessInfo.processInfo.environment["WORKLOG_PYTHON"], "/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"].compactMap { $0 }
@@ -86,10 +101,11 @@ final class WorklogApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
         let current = generation
         launchURL = nil
         stdoutBuffer = ""
-        guard let python = python(), let resources = Bundle.main.resourceURL else {
+        guard let python = python(), FileManager.default.fileExists(atPath: sourceRoot.path) else {
             fail("未找到 Python 3.9+。请先安装 Python 3，再重新打开 App。")
             return
         }
+        let resources = sourceRoot
         let backend = Process()
         let output = Pipe()
         var environment = ProcessInfo.processInfo.environment
@@ -128,6 +144,7 @@ final class WorklogApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
         pipe = output
         do {
             try backend.run()
+            startWatcher()
             launchTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in
                 guard let self, self.generation == current else { return }
                 self.fail("启动超过 30 秒。请检查日志目录是否过大、Python 环境和数据库状态。")
@@ -139,12 +156,50 @@ final class WorklogApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
     func stop() {
         generation += 1
         launchTimer?.invalidate()
+        watcher?.invalidate()
+        watcher = nil
         pipe?.fileHandleForReading.readabilityHandler = nil
         process?.terminationHandler = nil
         if let process, process.isRunning { process.interrupt(); process.waitUntilExit() }
         process = nil
         pipe = nil
     }
+    // Dev mode only: poll source mtimes and apply edits without quitting the app.
+    // Python changes restart the backend; static asset changes reload the page.
+    func startWatcher() {
+        guard devMode, !smoke else { return }
+        lastPythonFingerprint = fingerprint(sourceRoot.appendingPathComponent("worklog"), ["py"])
+        lastStaticFingerprint = fingerprint(sourceRoot.appendingPathComponent("static"), ["js", "css", "html", "svg"])
+        watcher = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in self?.checkForChanges() }
+    }
+
+    func fingerprint(_ directory: URL, _ extensions: Set<String>) -> String {
+        guard let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey], options: [.skipsHiddenFiles]) else { return "" }
+        var parts: [String] = []
+        for case let url as URL in enumerator where extensions.contains(url.pathExtension) {
+            let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+            parts.append("\(url.path):\(values?.contentModificationDate?.timeIntervalSince1970 ?? 0):\(values?.fileSize ?? 0)")
+        }
+        return parts.sorted().joined(separator: "|")
+    }
+
+    func checkForChanges() {
+        let python = fingerprint(sourceRoot.appendingPathComponent("worklog"), ["py"])
+        let assets = fingerprint(sourceRoot.appendingPathComponent("static"), ["js", "css", "html", "svg"])
+        if python != lastPythonFingerprint {
+            lastPythonFingerprint = python
+            lastStaticFingerprint = assets
+            confirmLeaving { allowed in
+                guard allowed else { return }
+                self.stop()
+                self.start()
+            }
+        } else if assets != lastStaticFingerprint {
+            lastStaticFingerprint = assets
+            confirmLeaving { allowed in if allowed { self.webView?.reload() } }
+        }
+    }
+
     func fail(_ message: String) {
         launchTimer?.invalidate()
         if smoke { fputs("Desktop smoke failed: \(message)\n", stderr); stop(); exit(1) }

@@ -2,7 +2,13 @@
 from functools import lru_cache
 from pathlib import Path
 
-from .core import identity, label
+from .core import identity
+
+
+def display_name(value):
+    """Project label for humans; spaces and non-ASCII names are legitimate here."""
+    text = ''.join(ch for ch in str(value) if ch.isprintable()).strip()
+    return text[:80] or '未知项目'
 
 
 def _small_text(path):
@@ -18,7 +24,7 @@ def repository(cwd):
     """Return a common Git directory and display name, or the original cwd fallback."""
     path = Path(cwd).expanduser()
     if not path.is_absolute():
-        return cwd, '未知项目' if cwd == 'unknown' else label(path.name)
+        return cwd, '未知项目' if cwd == 'unknown' else display_name(path.name)
     try:
         path = path.resolve()
         for parent in (path, *path.parents):
@@ -37,10 +43,10 @@ def repository(cwd):
             common_file = git / 'commondir'
             common = (git / _small_text(common_file)).resolve() if common_file.is_file() else git
             name = common.parent.name if common.name == '.git' else parent.name
-            return 'repository:' + str(common), label(name)
+            return 'repository:' + str(common), display_name(name)
     except (OSError, ValueError, UnicodeError):
         pass
-    return str(path), label(path.name) or '未知项目'
+    return str(path), display_name(path.name)
 
 
 def migrate(db):

@@ -125,13 +125,10 @@ let browser;
 	await page.screenshot({
 		path: path.join(output, "home-work-first-mobile.png"),
 	});
-	const firstAction = await page
-		.locator("#task-focus .focus-row button")
-		.first()
-		.boundingBox();
+	const firstAction = await page.locator("#automation-toggle").boundingBox();
 	assert.ok(
 		firstAction && firstAction.y + firstAction.height < 844,
-		"First work action should be visible without scrolling on mobile",
+		"Automatic capture should be visible without scrolling on mobile",
 	);
 	await page.locator("#open-tasks").click();
 	assert.equal(await page.locator("#tasks").isVisible(), true);
