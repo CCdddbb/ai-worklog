@@ -125,9 +125,60 @@ def build_document(days, first, last, zone, period):
             'limitations': '状态按记录所属日期和当前人工结论汇总，不代表实际完成时间。未记录不等于没有工作；AI 草稿不自动算成果，引用有效不保证结论真实。'}
 
 
+def clipboard_digest(document):
+    """Paste-ready short text built from the same report document, never a second source of truth.
+
+    Deliberately omits usage statistics, coverage notes and evidence appendices: those belong in the
+    delivery report, not in the text pasted into a company daily-report form.
+    """
+    automatic = document.get('automatic_work') or {}
+    done, ongoing, blocked, next_steps = [], [], [], []
+    for record in automatic.get('records', []):
+        items = (record.get('work') or {}).get('work_items') or []
+        detail = '；'.join(safe_text(entry['outcome']['text']) for entry in items if entry.get('outcome'))
+        if not detail:
+            detail = '；'.join(safe_text(entry['problem']['text']) for entry in items if entry.get('problem'))
+        line = f'{safe_text(record["title"])}：{detail}' if detail else safe_text(record['title'])
+        if record.get('status') == 'blocked':
+            blocked.append(line)
+        elif record.get('archived'):
+            done.append(line)
+        else:
+            ongoing.append(line)
+    for record in document.get('display_records', []):
+        review = record.get('review') or {}
+        line = f'{safe_text(record["title"])}：{safe_text(review.get("outcome") or "待补充结果")}'
+        status = record.get('status')
+        if status == 'confirmed':
+            done.append(line)
+        elif status == 'blocked':
+            blocked.append(line)
+        elif status == 'in_progress':
+            ongoing.append(line)
+    for action in document.get('next_steps', [])[:12]:
+        next_steps.append(f'{safe_text(action["title"])}：{safe_text(action["text"])}')
+    totals = document.get('totals', {})
+    if totals.get('attention') or totals.get('needs_review'):
+        next_steps.append(f'另有 {totals.get("attention", 0)} 条需关注、{totals.get("needs_review", 0)} 条待核对，详见工作报告。')
+    span = document['first'] if document['first'] == document['last'] else f'{document["first"]} 至 {document["last"]}'
+    heading = '今日完成' if document['period'] == 'day' else '本期完成'
+    lines = [f'【{document["title"]}】{span}']
+    for label, entries in [(heading, done), ('进行中', ongoing), ('风险与阻塞', blocked), ('下一步与待核对', next_steps)]:
+        unique = list(dict.fromkeys(entries))[:30]
+        lines.append(label + '：')
+        if unique:
+            lines.extend('- ' + entry for entry in unique)
+        else:
+            lines.append('- 无')
+    if not any((done, ongoing, blocked, next_steps)):
+        lines.append('暂无自动或人工记录；未记录不等于没有工作。')
+    lines.append('注：内容由本地工作记录自动整理，自动归档不等于人工验收；提交前可自行编辑。')
+    return '\n'.join(lines) + '\n'
+
+
 def report_document(path, day, zone, period='day', detail='brief'):
     from .store import report_data
-    if detail not in ('brief', 'full'):
+    if detail not in ('brief', 'full', 'clipboard'):
         raise ValueError('Invalid report detail')
     first, last = period_days(day, period)
     days = []
@@ -150,7 +201,7 @@ def report_document(path, day, zone, period='day', detail='brief'):
                                 f'受阻 {stats["blocked"]} 项；已归因活跃时长估计 {stats["active_seconds"] / 60:.1f} 分钟。'
                                 '下列内容自动生成，无需人工重填；自动归档不等于业务验收。')
     document['detail'] = detail
-    document['markdown'] = document_markdown(document)
+    document['markdown'] = clipboard_digest(document) if detail == 'clipboard' else document_markdown(document)
     return document
 
 

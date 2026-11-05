@@ -60,6 +60,41 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.get('/../../etc/passwd')[0], 404)
         self.assertEqual(self.get('/identity.key')[0], 404)
 
+    def test_clipboard_report_endpoint_returns_plain_digest(self):
+        status, headers, body = self.get('/api/report?detail=clipboard')
+        self.assertEqual(status, 200)
+        self.assertIn('text/plain', headers['Content-Type'])
+        text = body.decode()
+        self.assertIn('【AI 工作日报】', text)
+        self.assertNotIn('## 活动事实', text)
+        self.assertEqual(self.get('/api/report?detail=bogus')[0], 400)
+
+    def test_workbench_exposes_daily_clipboard_button(self):
+        status, _, body = self.get('/', auth=False)
+        self.assertEqual(status, 200)
+        self.assertIn(b'id="copy-daily"', body)
+
+    def test_onboarding_endpoint_is_private_and_empty_by_default(self):
+        self.assertEqual(self.get('/api/onboarding', auth=False)[0], 401)
+        status, _, body = self.get('/api/onboarding?date=2026-01-02')
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload['state'], 'empty')
+        self.assertIn('--db', payload['database']['command'])
+        self.assertEqual(self.get('/api/onboarding?date=2026-02-30')[0], 400)
+
+    def test_workbench_exposes_guidance_and_model_free_session_record(self):
+        self.assertIn(b'id="onboarding"', self.get('/', auth=False)[2])
+        self.assertIn(b'/api/onboarding', self.get('/app.js', auth=False)[2])
+        script = self.get('/tasks.js', auth=False)[2]
+        self.assertIn('直接记录'.encode(), script)
+        self.assertIn(b'quickManualRecord', script)
+        self.assertIn(b'singleSessionTask', script)
+        tree = self.get('/conversations.js', auth=False)[2]
+        self.assertIn('直接手工记录'.encode(), tree)
+        self.assertIn(b'changed_today', tree)
+        self.assertIn(b'quickManualRecord', tree)
+
     def test_security_headers_and_static_page_has_no_token(self):
         status, headers, body = self.get('/', auth=False)
         self.assertEqual(status, 200)
@@ -89,6 +124,7 @@ class WebTests(unittest.TestCase):
         self.assertNotIn('https://', script)
         self.assertNotIn('localStorage', script)
         self.assertIn('textContent', script)
+        self.assertIn('detail: "clipboard"', script)
 
 
 class CliTests(unittest.TestCase):

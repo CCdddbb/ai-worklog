@@ -197,10 +197,12 @@ async function load() {
 			return;
 		}
 		render(value);
+		void loadOnboarding(requestedDay);
 		if (!$("report").classList.contains("hidden")) await loadReport();
 	} catch (error) {
 		$("status").textContent = error.message;
 		$("status").className = "error";
+		hideOnboarding();
 	} finally {
 		loading = false;
 		$("refresh").disabled = false;
@@ -273,6 +275,91 @@ $("download").addEventListener("click", async () => {
 		$("status").textContent = error.message;
 	}
 });
+async function copyToClipboard(text) {
+	if (!navigator.clipboard?.writeText) {
+		throw new Error("当前环境不支持剪贴板，请改用「工作报告」里的导出报告");
+	}
+	await navigator.clipboard.writeText(text);
+}
+$("copy-daily").addEventListener("click", async () => {
+	try {
+		const params = new URLSearchParams({ period: "day", detail: "clipboard" });
+		if ($("date").value) params.set("date", $("date").value);
+		const text = await (await api(`/api/report?${params}`)).text();
+		await copyToClipboard(text);
+		$("status").textContent = "今日日报已复制，可直接粘贴到日报系统。";
+	} catch (error) {
+		$("status").textContent = `复制失败：${error.message}`;
+	}
+});
+let onboardingSignature = null;
+function hideOnboarding() {
+	onboardingSignature = null;
+	$("onboarding").classList.add("hidden");
+}
+function onboardingAction(item) {
+	if (item.action === "triage") return window.worklogTasks?.beginTriage();
+	if (item.action === "creation") {
+		showView(document.querySelector('[data-view="tasks"]'));
+		return window.worklogTasks?.openCreation();
+	}
+	const button = document.querySelector(`[data-view="${item.action}"]`);
+	if (button) showView(button);
+}
+function renderOnboarding(state) {
+	const signature = JSON.stringify(state);
+	if (signature === onboardingSignature) return;
+	onboardingSignature = signature;
+	const panel = $("onboarding");
+	panel.replaceChildren();
+	if (!state || state.state === "ready") {
+		panel.classList.add("hidden");
+		return;
+	}
+	panel.classList.remove("hidden");
+	const head = element("div", undefined, "section-head");
+	head.append(element("h2", state.title));
+	const actions = element("div", undefined, "task-actions");
+	for (const item of state.actions || []) {
+		const button = element("button", item.label, "button-quiet");
+		button.type = "button";
+		button.addEventListener("click", () => onboardingAction(item));
+		actions.append(button);
+	}
+	head.append(actions);
+	panel.append(head, element("p", state.message, "hint"));
+	const details = element("details");
+	details.append(element("summary", "数据来源与已有数据库"));
+	const facts = state.facts || {};
+	const sources = (facts.sources || []).join("、") || "无";
+	details.append(
+		element(
+			"p",
+			`已导入来源：${sources}；当日事件 ${number(facts.events || 0)}、会话 ${number(facts.sessions || 0)}、` +
+				`工作记录 ${number(facts.task_count || 0)}、自动记录 ${number(facts.automatic_count || 0)}、` +
+				`人工审阅 ${number(facts.review_count || 0)}。`,
+			"hint",
+		),
+	);
+	if (Object.keys(facts.gaps || {}).length)
+		details.append(element("p", `读取缺口：${JSON.stringify(facts.gaps)}`, "hint"));
+	details.append(
+		element("p", state.database?.note || "", "hint"),
+		element("code", state.database?.command || ""),
+	);
+	panel.append(details);
+}
+async function loadOnboarding(requestedDay) {
+	try {
+		const state = await (
+			await api(`/api/onboarding?date=${encodeURIComponent(requestedDay)}`)
+		).json();
+		if (requestedDay === $("date").value) renderOnboarding(state);
+	} catch {
+		// Guidance is optional; never mask the main data status or an auth error.
+		hideOnboarding();
+	}
+}
 const viewHistory = [];
 function currentView() {
 	return (
@@ -377,6 +464,7 @@ function applyViewContext(view) {
 	$("download").classList.toggle("primary", view === "report");
 	$("download").textContent = view === "weekly" ? "导出本周周报" : "导出报告";
 	$("open-tasks").classList.toggle("hidden", view !== "overview");
+	$("copy-daily").classList.toggle("hidden", view !== "overview");
 }
 async function showView(button, { remember = true, force = false } = {}) {
 	if (remember && (currentView() !== button.dataset.view || force))

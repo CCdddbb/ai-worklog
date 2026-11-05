@@ -686,6 +686,47 @@ class TaskBoard {
 		if (optional) optional.open = true;
 		card?.querySelector(".review-outcome")?.focus({ preventScroll: true });
 	}
+	async singleSessionTask(session) {
+		const existing = this.tasks?.find(
+			(item) =>
+				item.sessions.length === 1 &&
+				item.sessions[0] === session.session &&
+				item.status === "open",
+		);
+		if (existing) return existing;
+		return await (
+			await api("/api/tasks", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					title: sessionName(session),
+					sessions: [session.session],
+					date: this.current.date,
+					start_time: "00:00",
+				}),
+			})
+		).json();
+	}
+	async quickManualRecord(session) {
+		if (this.quickPending.has(session.session)) return;
+		rememberLocation();
+		this.quickPending.add(session.session);
+		try {
+			const created = await this.singleSessionTask(session);
+			await this.refresh();
+			const task =
+				this.tasks?.find((item) => item.id === created.id) || created;
+			this.notice(
+				`已为“${sessionName(session)}”创建记录，未调用模型；请在右侧填写工作结果。`,
+			);
+			this.openReview(task);
+		} catch (error) {
+			await this.refresh();
+			this.notice(`无法创建手工记录：${error.message}`);
+		} finally {
+			this.quickPending.delete(session.session);
+		}
+	}
 	async deferSession(session, deferred) {
 		await api("/api/session-triage", {
 			method: "POST",
@@ -909,6 +950,12 @@ class TaskBoard {
 				);
 				actions.append(
 					this.button(
+						"直接记录",
+						() => this.quickManualRecord(session),
+						false,
+						"secondary",
+					),
+					this.button(
 						"生成总结",
 						() => this.quickSummary(session),
 						false,
@@ -992,25 +1039,7 @@ class TaskBoard {
 		rememberLocation();
 		this.quickPending.add(session.session);
 		try {
-			let task = this.tasks.find(
-				(item) =>
-					item.sessions.length === 1 &&
-					item.sessions[0] === session.session &&
-					item.status === "open",
-			);
-			if (!task)
-				task = await (
-					await api("/api/tasks", {
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({
-							title: sessionName(session),
-							sessions: [session.session],
-							date: this.current.date,
-							start_time: "00:00",
-						}),
-					})
-				).json();
+			const task = await this.singleSessionTask(session);
 			await api("/api/summarize", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },

@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 
 from worklog.documents import (
     build_document,
+    clipboard_digest,
     document_markdown,
     period_days,
     report_document,
@@ -37,6 +38,24 @@ def day_data():
 class DocumentTests(unittest.TestCase):
     def document(self, data):
         return build_document([data], data['date'], data['date'], 'UTC', 'day')
+
+    def test_clipboard_digest_is_paste_ready_and_shares_report_data(self):
+        data = day_data()
+        data['task_reviews'] = [{'id': 'one', 'title': '登录修复', 'status': 'confirmed',
+                                 'outcome': '人工核对登录恢复', 'verification': '合成测试通过',
+                                 'next_steps': '补生产回归', 'updated_at': 20}]
+        doc = self.document(data)
+        doc['automatic_work'] = {'stats': {'total': 1}, 'records': [
+            {'title': '订单筛选翻页', 'status': 'blocked', 'archived': False,
+             'work': {'work_items': [{'outcome': item('仍有2个回归用例失败')}]}}]}
+        text = clipboard_digest(doc)
+        self.assertIn('【AI 工作日报】', text)
+        self.assertIn('人工核对登录恢复', text)
+        self.assertIn('仍有2个回归用例失败', text)
+        self.assertIn('补生产回归', text)
+        for excluded in ('## 活动事实', '数据覆盖与口径', 'Token', 'LLM任务总结'):
+            self.assertNotIn(excluded, text)
+        self.assertIn('自动归档不等于人工验收', text)
 
     def test_manual_outcome_precedes_drafts_and_statistics(self):
         data = day_data()

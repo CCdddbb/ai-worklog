@@ -69,6 +69,25 @@ class ConversationTree {
 		);
 		const parts = element("ul", undefined, "conversation-parts");
 		for (const part of value.parts) parts.append(this.part(part));
+		// The legacy inbox is hidden while automatic recording is on, so the
+		// model-free manual path must also be reachable from the tree. Only
+		// conversations with progress on the selected day can be linked: task
+		// creation rejects sessions outside that day's imported events.
+		if (value.changed_today) {
+			const manual = element("button", "直接手工记录", "button-quiet");
+			manual.type = "button";
+			manual.addEventListener("click", () =>
+				window.worklogTasks?.quickManualRecord({
+					session: value.session,
+					display_name: (value.title || "未命名对话").slice(0, 150),
+					source: "pi",
+					first: 0,
+					last: 0,
+					titles: [],
+				}),
+			);
+			node.append(manual);
+		}
 		node.append(parts);
 		if (!value.parts.length)
 			node.append(

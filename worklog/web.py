@@ -65,7 +65,7 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                 name, mime = assets[url.path]
                 self.send(200, (STATIC / name).read_bytes(), mime + '; charset=utf-8')
                 return
-            if url.path not in ['/api/day', '/api/week', '/api/report', '/api/report-view', '/api/tasks', '/api/task-preview', '/api/work-records', '/api/work-record-history', '/api/conversations', '/api/conversation-progress']:
+            if url.path not in ['/api/day', '/api/week', '/api/report', '/api/report-view', '/api/tasks', '/api/task-preview', '/api/work-records', '/api/work-record-history', '/api/conversations', '/api/conversation-progress', '/api/onboarding']:
                 self.send(404, {'error': 'not_found'})
                 return
             try:
@@ -74,7 +74,10 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                 if len(target_day) != 10:
                     raise ValueError('Invalid date')
                 bounds(target_day, zone)
-                if url.path == '/api/conversations':
+                if url.path == '/api/onboarding':
+                    from .onboarding import onboarding_state
+                    self.send(200, onboarding_state(db_path, target_day, zone))
+                elif url.path == '/api/conversations':
                     from .conversations import tree_data
                     self.send(200, tree_data(db_path, target_day, zone))
                 elif url.path == '/api/conversation-progress':

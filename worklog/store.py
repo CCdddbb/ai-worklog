@@ -245,8 +245,8 @@ def report_data(path, day, zone):
 
 
 def markdown(data, detail='brief'):
-    from .documents import build_document, document_markdown
-    if detail not in ('brief', 'full'):
+    from .documents import build_document, clipboard_digest, document_markdown
+    if detail not in ('brief', 'full', 'clipboard'):
         raise ValueError('Invalid report detail')
     automatic = data.get('automatic_work')
     if automatic:
@@ -262,7 +262,7 @@ def markdown(data, detail='brief'):
         document['overview'] = (f'自动整理 {stats["total"]} 项任务记录，归档 {stats["archived"]} 项，受阻 {stats["blocked"]} 项；'
                                 f'活跃时长估计 {stats["active_seconds"] / 60:.1f} 分钟。自动记录无需人工重填，归档不等于人工验收。')
     document['detail'] = detail
-    return document_markdown(document)
+    return clipboard_digest(document) if detail == 'clipboard' else document_markdown(document)
 
 
 def period_markdown(path, day, zone, period, detail='brief'):
