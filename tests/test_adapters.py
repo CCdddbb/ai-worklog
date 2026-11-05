@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -7,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from worklog.adapters import collect
+from worklog.core import bounds
 from worklog.store import connect, markdown, report_data, salt, save
 
 DAY = '2026-01-02'
@@ -118,6 +120,66 @@ class AdapterTests(unittest.TestCase):
         (self.source / 'second.jsonl').write_text(self.path.read_text())
         _, stats = collect(self.source, 'pi', KEY, max_files=1)
         self.assertEqual(stats['omitted_files'], 1)
+
+    def test_window_ignores_files_written_before_it(self):
+        self.write([pi_header(), pi_message()])
+        start, end = bounds(DAY, 'UTC')
+        os.utime(self.path, (start + 3600, start + 3600))
+        stale = self.source / 'stale.jsonl'
+        stale.write_text(json.dumps(pi_header()) + '\n')
+        os.utime(stale, (1000, 1000))
+        rows, stats = collect(self.source, 'pi', KEY, window=(start - 300, end + 300))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(stats['selected'], 1)
+        self.assertEqual(stats['irrelevant_files'], 1)
+        self.assertEqual(stats['omitted_files'], 0)
+
+    def test_window_only_omits_files_that_could_hold_the_day(self):
+        self.write([pi_header(), pi_message()])
+        start, end = bounds(DAY, 'UTC')
+        second = self.source / 'second.jsonl'
+        second.write_text(self.path.read_text())
+        for path in (self.path, second):
+            os.utime(path, (start + 3600, start + 3600))
+        _, stats = collect(self.source, 'pi', KEY, max_files=1, window=(start - 300, end + 300))
+        self.assertEqual(stats['omitted_files'], 1)
+        self.assertEqual(stats['irrelevant_files'], 0)
+
+    def test_window_streams_oversized_file_instead_of_dropping_it(self):
+        self.write([pi_header(), pi_message()])
+        start, end = bounds(DAY, 'UTC')
+        os.utime(self.path, (start + 3600, start + 3600))
+        with patch('worklog.adapters.MAX_FILE', 10):
+            rows, stats = collect(self.source, 'pi', KEY, window=(start - 300, end + 300))
+        self.assertEqual(rows, [])
+        self.assertEqual(stats['oversized_files'], 0)
+        self.assertEqual(stats['truncated_files'], 1)
+
+    def test_oversized_file_whose_newest_record_predates_the_day_is_not_a_gap(self):
+        self.write([pi_header(), pi_message()])
+        start, _ = bounds(DAY, 'UTC')
+        os.utime(self.path, (start + 90000, start + 90000))
+        with patch('worklog.adapters.MAX_FILE', 10):
+            rows, stats = collect(self.source, 'pi', KEY, window=(start + 86400, start + 2 * 86400))
+        self.assertEqual(rows, [])
+        self.assertEqual(stats['oversized_files'], 0)
+        self.assertEqual(stats['truncated_files'], 0)
+        self.assertEqual(stats['irrelevant_files'], 1)
+
+    def test_oversized_line_outside_window_is_disclosed_but_not_a_gap(self):
+        self.write([pi_header(), pi_message()])
+        start, end = bounds(DAY, 'UTC')
+        os.utime(self.path, (start + 3600, start + 3600))
+        old = pi_message('user', 'huge')
+        old['timestamp'] = '2025-01-01T00:00:00Z'
+        old['message']['content'] = 'x' * 4096
+        with self.path.open('a') as stream:
+            stream.write(json.dumps(old) + '\n')
+        with patch('worklog.adapters.MAX_LINE', 1024):
+            rows, stats = collect(self.source, 'pi', KEY, window=(start - 300, end + 300))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(stats['oversized_lines'], 0)
+        self.assertEqual(stats['out_of_window_oversized_lines'], 1)
 
     def test_symlink_is_not_read(self):
         self.write([pi_header(), pi_message()])

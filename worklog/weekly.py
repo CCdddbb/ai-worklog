@@ -3,6 +3,7 @@ import json
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from .adapters import GAP_KEYS
 from .core import bounds
 from .store import connect
 
@@ -77,10 +78,7 @@ def week_data(path, day, zone):
             item['states'][task['status']] += 1
         item['recorded'] = bool(item['events'] or item['tasks'] or item['coverage'])
         item['active'] = bool(item['events'] or item['tasks'])
-        item['coverage_gaps'] = any(any(c.get(k, 0) for k in (
-            'omitted_files', 'oversized_files', 'malformed_lines', 'partial_lines',
-            'unreadable_files', 'truncated_files', 'oversized_lines', 'invalid_timestamps'))
-            for c in item['coverage'])
+        item['coverage_gaps'] = any(any(c.get(k, 0) for k in GAP_KEYS) for c in item['coverage'])
         for field in ('events', 'requests', 'tokens'):
             totals[field] += item[field]
         for state, count in item['states'].items():

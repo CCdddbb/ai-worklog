@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from .adapters import collect
+from .adapters import GAP_KEYS, collect
 from .evidence import (
     EvidenceUnavailable,
     activity_digest,
@@ -29,8 +29,7 @@ from .llm import (
 from .reporting import business_lines
 from .store import FIELDS, connect, salt
 
-GAPS = ('omitted_files', 'oversized_files', 'oversized_lines', 'truncated_files',
-        'partial_lines', 'malformed_lines', 'unreadable_files', 'invalid_timestamps')
+GAPS = GAP_KEYS
 
 
 REVIEW_INSTRUCTIONS = ('\n这是跨会话增量工作回顾。work_items应按首次出现的时间列出不同任务，'

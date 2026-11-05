@@ -1,14 +1,17 @@
 import contextlib
 import io
 import json
+import os
 import tempfile
 import threading
 import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from unittest.mock import patch
 
-from worklog.cli import main
+from worklog.cli import main, refresh_week, week_days
+from worklog.core import bounds
 from worklog.store import connect
 from worklog.web import make_server
 
@@ -107,6 +110,46 @@ class CliTests(unittest.TestCase):
             main(['import'])
         with self.assertRaises(ValueError):
             main(['import', '--max-files', '0'])
+
+    def test_import_scopes_coverage_gaps_to_the_requested_day(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'sessions'
+            source.mkdir()
+            fresh = source / 'fresh.jsonl'
+            fresh.write_text(json.dumps({'type': 'session', 'id': 's', 'cwd': '/p'}) + '\n'
+                             + json.dumps({'type': 'message', 'id': 'm',
+                                           'timestamp': '2026-01-02T01:00:00Z',
+                                           'message': {'role': 'assistant', 'content': 'x'}}) + '\n')
+            stale = source / 'stale.jsonl'
+            stale.write_text(json.dumps({'type': 'session', 'id': 'old', 'cwd': '/p'}) + '\n')
+            os.utime(stale, (1000, 1000))
+            start, _ = bounds('2026-01-02', 'UTC')
+            os.utime(fresh, (start + 3600, start + 3600))
+            db = root / 'data.sqlite3'
+            with contextlib.redirect_stdout(io.StringIO()):
+                main(['import', '--db', str(db), '--date', '2026-01-02', '--timezone', 'UTC',
+                      '--pi-dir', str(source)])
+            connection = connect(db)
+            try:
+                coverage = json.loads(connection.execute(
+                    "SELECT coverage FROM import_days WHERE source='pi' AND day='2026-01-02'"
+                ).fetchone()[0])
+                events = connection.execute('SELECT COUNT(*) FROM events').fetchone()[0]
+            finally:
+                connection.close()
+            self.assertEqual(events, 1)
+            self.assertEqual(coverage['irrelevant_files'], 1)
+            self.assertEqual(coverage['omitted_files'], 0)
+
+    def test_week_refresh_repairs_elapsed_days_only(self):
+        self.assertEqual(week_days('2026-10-28'), [
+            '2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29',
+            '2026-10-30', '2026-10-31', '2026-11-01'])
+        with patch('worklog.cli.import_sources') as imported:
+            refresh_week(object(), '2026-10-28')
+        self.assertEqual([call.args[1] for call in imported.call_args_list],
+                         ['2026-10-26', '2026-10-27'])
 
     def test_title_purge_only_changes_owned_database(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -8,6 +8,10 @@ from .core import identity, label, mapping, timestamp, usage, user_title
 
 MAX_FILE = 64 * 1024 * 1024
 MAX_LINE = 2 * 1024 * 1024
+# Structural read problems that make a scan incomplete. Out-of-window findings are not here:
+# they describe history outside the requested day and must never look like that day's gap.
+GAP_KEYS = ('omitted_files', 'oversized_files', 'oversized_lines', 'truncated_files',
+            'partial_lines', 'malformed_lines', 'unreadable_files', 'invalid_timestamps')
 
 
 def prefix_timestamp(raw):
@@ -213,15 +217,35 @@ def codex_events(path, salt, stats, titles=False, window=None):
     return result + (direct if direct else legacy)
 
 
+def tail_timestamp(path):
+    """Timestamp of the newest record, or None when the last line is not a readable record.
+
+    Session logs are append-only, so a complete last line is the newest evidence. Only the
+    tail is read: deciding that a 64 MiB file predates a day must not cost 64 MiB.
+    """
+    try:
+        size = path.stat().st_size
+        with path.open('rb') as stream:
+            stream.seek(max(0, size - 64 * 1024))
+            chunk = stream.read()
+    except OSError:
+        return None
+    if not chunk.endswith(b'\n'):
+        return None
+    lines = [line for line in chunk.split(b'\n') if line.strip()]
+    return prefix_timestamp(lines[-1]) if lines else None
+
+
 def collect(root, source, salt, titles=False, max_files=100, window=None):
     from .projects import repository
     repository.cache_clear()  # A workspace can become a repository while the App is running.
     root = Path(root).expanduser().resolve()
     if not root.is_dir() or source not in ['pi', 'codex']:
         raise ValueError('Choose an existing Pi/Codex session directory')
-    stats = {k: 0 for k in ['discovered', 'selected', 'omitted_files', 'oversized_files', 'oversized_lines',
-        'truncated_files', 'partial_lines', 'malformed_lines', 'invalid_timestamps', 'unreadable_files',
-        'symlinks_skipped', 'counter_resets', 'nested_usage_omitted', 'legacy_usage_suppressed']}
+    stats = {k: 0 for k in ['discovered', 'selected', 'irrelevant_files', 'omitted_files',
+        'oversized_files', 'oversized_lines', 'truncated_files', 'partial_lines', 'malformed_lines',
+        'invalid_timestamps', 'unreadable_files', 'symlinks_skipped', 'counter_resets',
+        'nested_usage_omitted', 'legacy_usage_suppressed']}
     paths = []
     for path in root.rglob('*.jsonl'):
         if path.is_symlink():
@@ -235,13 +259,26 @@ def collect(root, source, salt, titles=False, max_files=100, window=None):
             stats['unreadable_files'] += 1
     paths.sort(key=lambda item: item[0], reverse=True)
     stats['discovered'] = len(paths)
-    stats['omitted_files'] = max(0, len(paths) - max_files)
+    # A file last written before the window opened cannot hold an event inside it, so its
+    # structure problems and its absence from the scan are not gaps for this day. Without a
+    # window every file may matter and stays in scope.
+    relevant = paths if window is None else [item for item in paths if item[0] >= window[0]]
+    stats['irrelevant_files'] = len(paths) - len(relevant)
+    stats['omitted_files'] = max(0, len(relevant) - max_files)
     events = []
-    for _, path in paths[:max_files]:
+    for _, path in relevant[:max_files]:
         try:
             if path.stat().st_size > MAX_FILE:
-                stats['oversized_files'] += 1
-                continue
+                if window is None:
+                    stats['oversized_files'] += 1
+                    continue
+                newest = tail_timestamp(path)
+                if newest is not None and newest < window[0]:
+                    # Its newest record predates the window; the size is history, not a gap today.
+                    stats['irrelevant_files'] += 1
+                    continue
+                # Otherwise stream it: partial evidence beats silence, and records() stops
+                # at MAX_FILE and discloses the truncation.
             stats['selected'] += 1
             parser = pi_events if source == 'pi' else codex_events
             events.extend(parser(path, salt, stats, titles, window))

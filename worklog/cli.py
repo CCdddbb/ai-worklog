@@ -5,12 +5,12 @@ import sqlite3
 import sys
 import threading
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .adapters import collect, event
-from .core import bounds, usage
+from .core import TIMEOUT, bounds, usage
 from .store import connect, markdown, period_markdown, report_data, salt, save
 from .web import make_server
 
@@ -33,15 +33,36 @@ def import_sources(args, day):
     if not args.pi_dir and not args.codex_dir and not args.git_repo:
         raise ValueError('Specify --pi-dir, --codex-dir and/or --git-repo explicitly')
     key = salt(args.db)
+    # The same window save() keeps: files untouched since then cannot hold that day's events.
+    start, end = bounds(day, args.timezone)
+    window = (start - TIMEOUT, end + TIMEOUT)
     summaries = []
     for source, directory in [('pi', args.pi_dir), ('codex', args.codex_dir)]:
         if directory:
-            events, stats = collect(directory, source, key, args.titles, args.max_files)
+            events, stats = collect(directory, source, key, args.titles, args.max_files, window)
             summaries.append(save(args.db, events, stats, day, args.timezone))
     if args.git_repo:
         from .git_evidence import import_repo
         summaries.append(import_repo(args.git_repo, args.db, key, day, args.timezone))
     return summaries
+
+
+def week_days(day):
+    """Monday-to-Sunday calendar days that contain the anchor date."""
+    anchor = date.fromisoformat(day)
+    first = anchor - timedelta(days=anchor.weekday())
+    return [(first + timedelta(days=offset)).isoformat() for offset in range(7)]
+
+
+def refresh_week(args, day):
+    """Re-scan elapsed days of the anchor week so old coverage gaps get corrected.
+
+    Today is already imported at startup; future days are never scanned, because a
+    coverage row would make an untouched day look like a day that was worked on.
+    """
+    for target in week_days(day):
+        if target < day:
+            import_sources(args, target)
 
 
 def discover_sources(home):
@@ -94,6 +115,11 @@ def serve(args, day):
                               args.idle_minutes * 60, args.daily_summary_limit, args.timezone)
         if args.watch:
             def poll():
+                # One bounded pass repairs week rows written before scans were window-aware.
+                try:
+                    refresh_week(args, day)
+                except (OSError, ValueError, sqlite3.Error):
+                    print('Coverage refresh failed; private diagnostics suppressed.', file=sys.stderr)
                 while not stop.wait(args.interval):
                     try:
                         target = args.date or datetime.now(ZoneInfo(args.timezone)).date().isoformat()
@@ -137,7 +163,7 @@ def main(argv=None):
                 sub.add_argument('--git-repo', help='Explicit repository root for read-only commit metadata')
             if name != 'review':
                 sub.add_argument('--titles', action='store_true')
-            sub.add_argument('--max-files', type=int, default=500 if name == 'review' else 20)
+            sub.add_argument('--max-files', type=int, default=500 if name == 'review' else 100)
         if name in ['serve', 'start']:
             sub.add_argument('--port', type=int, default=8766)
             if name == 'serve':

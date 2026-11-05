@@ -58,6 +58,13 @@ class WeeklyTests(unittest.TestCase):
         self.assertEqual(result['totals']['active_days'], 0)
         self.assertEqual(result['totals']['recorded_days'], 2)
 
+    def test_coverage_gaps_ignore_findings_outside_the_day(self):
+        save(self.path, [], {'source': 'pi', 'irrelevant_files': 5,
+                             'out_of_window_oversized_lines': 2}, '2026-10-28', 'UTC')
+        result = week_data(self.path, '2026-10-28', 'UTC')
+        self.assertTrue(result['days'][2]['recorded'])
+        self.assertFalse(result['days'][2]['coverage_gaps'])
+
     def test_timezone_boundary_and_sunday_end(self):
         start, end = bounds('2026-03-08', 'America/New_York')
         self.assertEqual(end - start, 23 * 3600)

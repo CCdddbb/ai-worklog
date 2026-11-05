@@ -215,16 +215,17 @@ class WeekBoard {
 				role: "button",
 				"data-date": day.date,
 				"data-value": value,
-				"aria-label": `${day.date}，${number(value)} ${label}${day.coverage_gaps ? "，采集不完整" : ""}，打开当天`,
+				"aria-label": `${day.date}，${number(value)} ${label}${day.coverage_gaps ? "，采集不完整" : ""}，选中当天进展`,
 			});
 			circle.append(
 				svgElement("title", {}, `${day.date} · ${number(value)} ${label}`),
 			);
-			circle.addEventListener("click", () => this.openDay(day.date));
+			// Selecting stays inside the week; only "查看当天记录" leaves for the workbench.
+			circle.addEventListener("click", () => this.selectDay(day.date));
 			circle.addEventListener("keydown", (event) => {
 				if (["Enter", " "].includes(event.key)) {
 					event.preventDefault();
-					this.openDay(day.date);
+					this.selectDay(day.date);
 				}
 			});
 			points.push(circle);
@@ -237,7 +238,7 @@ class WeekBoard {
 			button.type = "button";
 			button.setAttribute(
 				"aria-label",
-				`${day.date} · ${day.recorded ? `${number(day[metric])} ${label}` : "未记录"}，查看当天`,
+				`${day.date} · ${day.recorded ? `${number(day[metric])} ${label}` : "未记录"}，选中当天进展`,
 			);
 			button.append(
 				element("span", `周${weekNames[index]}`),
@@ -248,7 +249,7 @@ class WeekBoard {
 				),
 				element("small", day.date.slice(5)),
 			);
-			button.addEventListener("click", () => this.openDay(day.date));
+			button.addEventListener("click", () => this.selectDay(day.date));
 			legend.append(button);
 		}
 		const caption = element(

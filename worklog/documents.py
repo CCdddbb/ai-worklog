@@ -3,6 +3,7 @@ import calendar
 import json
 from datetime import date, timedelta
 
+from .adapters import GAP_KEYS
 from .reporting import STATUS_LABELS, business_lines, safe_text
 from .review_focus import review_focus
 
@@ -97,8 +98,7 @@ def build_document(days, first, last, zone, period):
         timeline.append({'date': day, 'tasks': len(tasks), 'states': states,
                          'tokens': data.get('tokens', 0), 'requests': data.get('request_count', 0), 'recorded': recorded})
         for source, coverage in data.get('coverage', {}).items():
-            gaps = sum(coverage.get(key, 0) for key in ('omitted_files', 'oversized_files', 'oversized_lines',
-                'truncated_files', 'partial_lines', 'malformed_lines', 'unreadable_files', 'invalid_timestamps'))
+            gaps = sum(coverage.get(key, 0) for key in GAP_KEYS)
             if gaps or coverage.get('more_commits'):
                 coverage_notes.append(f'{day} · {source}：采集存在缺口，不能视为完整工作记录。')
     action_groups = {}

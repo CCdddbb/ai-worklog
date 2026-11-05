@@ -106,6 +106,30 @@ let browser;
 			.getAttribute("aria-pressed"),
 		"true",
 	);
+	// Trend selection stays inside the week; it must never jump to the workbench.
+	await page.locator('.trend-point[data-date="2026-10-27"]').click();
+	assert.equal(
+		await page
+			.locator('#week-work-chart button[data-date="2026-10-27"]')
+			.getAttribute("aria-pressed"),
+		"true",
+	);
+	assert.equal(await page.locator("#weekly").isVisible(), true);
+	assert.equal(await page.locator("#overview").isVisible(), false);
+	assert.equal(await page.locator("#date").inputValue(), "2026-10-28");
+	assert.match(
+		await page.locator("#week-days > details:not(.hidden)").textContent(),
+		/2026-10-27/,
+	);
+	await page
+		.locator('#week-usage-chart .trend-value[aria-label*="2026-10-30"]')
+		.click();
+	assert.equal(
+		await page
+			.locator('#week-work-chart button[data-date="2026-10-30"]')
+			.getAttribute("aria-pressed"),
+		"true",
+	);
 	for (const metric of ["tokens", "requests", "sessions"]) {
 		await page.locator("#week-metric").selectOption(metric);
 		assert.equal(await page.locator("#week-usage-chart button").count(), 7);

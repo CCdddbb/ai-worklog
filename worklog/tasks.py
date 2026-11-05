@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from .core import bounds
+from .core import TIMEOUT, bounds
 from .evidence import (
     EvidenceUnavailable,
     activity_digest,
@@ -528,7 +528,8 @@ class TaskService:
             titles = {}
             coverage = {}
             for source, root in self.roots.items():
-                events, stats = collect(root, source, self.key, titles=True, max_files=20)
+                events, stats = collect(root, source, self.key, titles=True, max_files=20,
+                                        window=(start - TIMEOUT, end + TIMEOUT))
                 coverage[source] = stats
                 for event in sorted(events, key=lambda item: item['ts']):
                     if event['session'] in known and start <= event['ts'] < end and event['title']:
