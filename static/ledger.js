@@ -407,7 +407,7 @@ class WorkLedger {
 		if (archive) params.set("state", $("archive-state").value);
 		const notice = archive ? $("archive-notice") : $("automation-notice");
 		try {
-			const value = await (await api(`/api/work-records?${params}`)).json();
+			const value = await (await api(`/api/work-timeline?${params}`)).json();
 			if (serial !== this.serial || day !== $("date").value) return;
 			this.categories = value.category_options;
 			if ($("archive-category").options.length === 1)
@@ -418,7 +418,7 @@ class WorkLedger {
 				}
 			if (!archive) {
 				this.lastDayTotal = value.stats.total;
-				renderTimeDistribution(value);
+				renderTimeDistribution({ records: value.nodes, stats: value.stats });
 				document
 					.querySelector(".automatic-workbench")
 					.classList.toggle(
@@ -431,28 +431,15 @@ class WorkLedger {
 				value.stats,
 				archive ? $("archive-stats") : $("automatic-stats"),
 			);
-			root.replaceChildren();
-			const records = archive
-				? value.records
-				: value.records
-						.slice()
-						.sort(
-							(a, b) =>
-								Number(a.archived) - Number(b.archived) ||
-								b.updated_at - a.updated_at,
-						)
-						.slice(0, 20);
-			for (const record of records) root.append(workRecordCard(record));
-			if (!records.length)
-				root.append(
-					element(
-						"p",
-						this.automation?.enabled
-							? "来源已自动记录，等待会话结束或空闲后整理。需要检查时会明确提示，不要求你重新填报。"
-							: "开启自动记录后，任务内容、解决的问题、耗时和分类将在这里自动生成。",
-						"ledger-empty",
-					),
-				);
+			window.worklogTimeline.renderWorkTimeline(value, root, {
+				controls: true,
+				limit: archive ? 500 : 40,
+				empty: archive
+					? "所选范围内没有工作记录；调整周期、分类或状态后再试。"
+					: this.automation?.enabled
+						? "来源已自动记录，等待会话结束或空闲后整理。需要检查时会明确提示，不要求你重新填报。"
+						: "开启自动记录后，任务内容、解决的问题、耗时和分类将在这里自动生成。",
+			});
 			if (archive) {
 				$("archive-range").textContent =
 					`${value.first} 至 ${value.last} · ${value.time_note}`;
@@ -495,6 +482,9 @@ class WorkLedger {
 	}
 	readonlyCard(record, full = false) {
 		return workRecordCard(record, { controls: false, full });
+	}
+	detailCard(record, controls = false) {
+		return workRecordCard(record, { controls, full: true });
 	}
 }
 window.worklogLedger = new WorkLedger();

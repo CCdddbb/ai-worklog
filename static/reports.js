@@ -145,16 +145,35 @@ function renderReport(document) {
 	if (hasAutomatic) {
 		const work = reportSection("自动记录的任务、结果与耗时");
 		work.append(element("p", automatic.time_note, "hint"));
-		for (const record of automatic.records) {
-			if (
-				$("report-focus-only").checked &&
-				record.archived &&
-				record.status !== "blocked"
-			)
-				continue;
-			work.append(
-				window.worklogLedger.readonlyCard(record, document.detail === "full"),
+		if (document.detail !== "full" && document.automatic_timeline) {
+			const timelineRoot = element("div");
+			work.append(timelineRoot);
+			window.worklogTimeline.renderWorkTimeline(
+				document.automatic_timeline,
+				timelineRoot,
+				{
+					controls: false,
+					filter: (node) =>
+						!(
+							$("report-focus-only").checked &&
+							node.archived &&
+							node.status !== "blocked"
+						),
+					empty: "没有符合当前关注筛选的工作记录；取消筛选可查看全部。",
+				},
 			);
+		} else {
+			for (const record of automatic.records) {
+				if (
+					$("report-focus-only").checked &&
+					record.archived &&
+					record.status !== "blocked"
+				)
+					continue;
+				work.append(
+					window.worklogLedger.readonlyCard(record, document.detail === "full"),
+				);
+			}
 		}
 		root.append(work);
 		legacyRoot = element("details", undefined, "manual-report-appendix");

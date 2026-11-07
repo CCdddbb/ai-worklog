@@ -31,7 +31,7 @@ LOGGER = logging.getLogger(__name__)
 
 class TaskService:
     def __init__(self, db_path, runner, roots=None, allow_excerpts=False, auto=False,
-                 idle_seconds=600, daily_limit=10, zone='Asia/Shanghai', clock=time.time):
+                 idle_seconds=180, daily_limit=10, zone='Asia/Shanghai', clock=time.time):
         self.path = Path(db_path)
         self.runner = runner
         self.roots = roots or {}

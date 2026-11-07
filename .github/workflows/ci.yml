@@ -34,6 +34,9 @@ jobs:
           node --check static/dashboard.js
           node --check static/weekly.js
           node --check static/reports.js
+          node --check static/ledger.js
+          node --check static/timeline.js
+          node --check tests/automation-browser.cjs
           node --check tests/browser-smoke.cjs
           node --check tests/weekly-browser.cjs
           node --check tests/report-browser.cjs

@@ -244,7 +244,7 @@ def report_data(path, day, zone):
         db.close()
 
 
-def markdown(data, detail='brief'):
+def markdown(data, detail='brief', path=None):
     from .documents import build_document, clipboard_digest, document_markdown
     if detail not in ('brief', 'full', 'clipboard'):
         raise ValueError('Invalid report detail')
@@ -258,6 +258,9 @@ def markdown(data, detail='brief'):
     document = build_document([data], data['date'], data['date'], data['timezone'], 'day')
     if automatic:
         document['automatic_work'] = automatic
+        if path:
+            from .timeline import timeline_data
+            document['automatic_timeline'] = timeline_data(path, data['date'], data['timezone'], 'day')
         stats = automatic['stats']
         document['overview'] = (f'自动整理 {stats["total"]} 项任务记录，归档 {stats["archived"]} 项，受阻 {stats["blocked"]} 项；'
                                 f'活跃时长估计 {stats["active_seconds"] / 60:.1f} 分钟。自动记录无需人工重填，归档不等于人工验收。')

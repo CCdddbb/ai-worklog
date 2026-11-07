@@ -55,7 +55,7 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
             url = urlsplit(self.path)
             assets = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'),
                       '/tasks.js': ('tasks.js', 'text/javascript'), '/dashboard.js': ('dashboard.js', 'text/javascript'),
-                      '/conversations.js': ('conversations.js', 'text/javascript'), '/ledger.js': ('ledger.js', 'text/javascript'), '/weekly.js': ('weekly.js', 'text/javascript'), '/reports.js': ('reports.js', 'text/javascript'),
+                      '/conversations.js': ('conversations.js', 'text/javascript'), '/ledger.js': ('ledger.js', 'text/javascript'), '/timeline.js': ('timeline.js', 'text/javascript'), '/weekly.js': ('weekly.js', 'text/javascript'), '/reports.js': ('reports.js', 'text/javascript'),
                       '/ledger.css': ('ledger.css', 'text/css'), '/style.css': ('style.css', 'text/css'), '/workbench.css': ('workbench.css', 'text/css'),
                       '/logo.svg': ('logo.svg', 'image/svg+xml'),
                       '/fonts/Manrope-Variable.ttf': ('fonts/Manrope-Variable.ttf', 'font/ttf')}
@@ -65,7 +65,7 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                 name, mime = assets[url.path]
                 self.send(200, (STATIC / name).read_bytes(), mime + '; charset=utf-8')
                 return
-            if url.path not in ['/api/day', '/api/week', '/api/report', '/api/report-view', '/api/tasks', '/api/task-preview', '/api/work-records', '/api/work-record-history', '/api/conversations', '/api/conversation-progress', '/api/onboarding']:
+            if url.path not in ['/api/day', '/api/week', '/api/report', '/api/report-view', '/api/tasks', '/api/task-preview', '/api/work-records', '/api/work-record-history', '/api/work-record-detail', '/api/work-timeline', '/api/conversations', '/api/conversation-progress', '/api/onboarding']:
                 self.send(404, {'error': 'not_found'})
                 return
             try:
@@ -86,6 +86,13 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                 elif url.path == '/api/work-record-history':
                     from .ledger import record_history
                     self.send(200, record_history(db_path, query.get('id', [''])[0]))
+                elif url.path == '/api/work-record-detail':
+                    from .ledger import record_detail
+                    self.send(200, record_detail(db_path, query.get('id', [''])[0]))
+                elif url.path == '/api/work-timeline':
+                    from .timeline import timeline_data
+                    self.send(200, timeline_data(db_path, target_day, zone, query.get('period', ['day'])[0],
+                        query.get('category', [None])[0], query.get('state', ['all'])[0]))
                 elif url.path == '/api/work-records':
                     from .ledger import work_record_data
                     self.send(200, work_record_data(db_path, target_day, zone, query.get('period', ['day'])[0],
@@ -109,7 +116,7 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                         period = query.get('period', ['day'])[0]
                         if period not in ('day', 'week', 'month'):
                             raise ValueError('Invalid period')
-                        self.send(200, markdown(data, query.get('detail', ['brief'])[0]) if period == 'day' else
+                        self.send(200, markdown(data, query.get('detail', ['brief'])[0], db_path) if period == 'day' else
                                   period_markdown(db_path, target_day, zone, period, query.get('detail', ['brief'])[0]),
                                   'text/plain; charset=utf-8')
             except (ValueError, OverflowError):

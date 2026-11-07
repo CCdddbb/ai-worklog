@@ -216,6 +216,21 @@ def project_summary(db, task, job_id, data, result, now):
     project(db, task, job_id, data, result, now)
 
 
+def _record_row(db, row):
+    """One full record for the detail view; the timeline never ships this payload by default."""
+    record = dict(row)
+    record['work'] = json.loads(record.pop('group_json'))
+    record['projects'] = json.loads(record.pop('projects_json'))
+    record.pop('intervals_json')
+    record.pop('anchors_json')
+    record['span_seconds'] = max(0, record['last_ts'] - record['first_ts'])
+    record['category_label'] = CATEGORIES[record['category']]
+    record['status_label'] = STATUS_LABELS[record['status']]
+    record['archived'] = record['archived_at'] is not None
+    record['updates'] = db.execute('SELECT COUNT(*) FROM work_record_history WHERE record_id=?', (record['id'],)).fetchone()[0]
+    return record
+
+
 def work_record_data(path, day, zone, period='day', category=None, state='all'):
     from .documents import period_days
     from .store import connect
@@ -242,17 +257,7 @@ def work_record_data(path, day, zone, period='day', category=None, state='all'):
             'FROM work_records WHERE ' + where + ' GROUP BY category ORDER BY count DESC,category', params)]
         records = []
         for row in db.execute('SELECT * FROM work_records WHERE ' + where + ' ORDER BY day DESC,updated_at DESC,id LIMIT 500', params):
-            record = dict(row)
-            record['work'] = json.loads(record.pop('group_json'))
-            record['projects'] = json.loads(record.pop('projects_json'))
-            record.pop('intervals_json')
-            record.pop('anchors_json')
-            record['span_seconds'] = max(0, record['last_ts'] - record['first_ts'])
-            record['category_label'] = CATEGORIES[record['category']]
-            record['status_label'] = STATUS_LABELS[record['status']]
-            record['archived'] = record['archived_at'] is not None
-            record['updates'] = db.execute('SELECT COUNT(*) FROM work_record_history WHERE record_id=?', (record['id'],)).fetchone()[0]
-            records.append(record)
+            records.append(_record_row(db, row))
         for item in categories:
             item['label'] = CATEGORIES[item['category']]
         stats = dict(aggregate)
@@ -287,6 +292,21 @@ def record_history(path, record_id):
             raise ValueError('Unknown record')
         return {'history': [{'job_id': row['job_id'], 'work': json.loads(row['group_json']), 'recorded_at': row['recorded_at']}
                             for row in db.execute('SELECT * FROM work_record_history WHERE record_id=? ORDER BY recorded_at DESC,rowid DESC LIMIT 50', (record_id,))]}
+    finally:
+        db.close()
+
+
+def record_detail(path, record_id):
+    """Full detail for one timeline node, loaded only when a person opens it."""
+    from .store import connect
+    if not isinstance(record_id, str) or not re.fullmatch(r'[a-f0-9]{32}', record_id):
+        raise ValueError('Invalid record')
+    db = connect(path)
+    try:
+        row = db.execute('SELECT * FROM work_records WHERE id=?', (record_id,)).fetchone()
+        if not row:
+            raise ValueError('Unknown record')
+        return {'record': _record_row(db, row)}
     finally:
         db.close()
 

@@ -254,6 +254,125 @@
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 }
+/* Compact project timeline: one line per record, full text only on demand. */
+.work-timeline {
+	display: grid;
+	gap: 16px;
+	min-width: 0;
+}
+.timeline-note {
+	margin: 0;
+}
+.timeline-project {
+	min-width: 0;
+	padding: 16px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-panel);
+	background: var(--panel);
+	box-shadow: var(--shadow-sm);
+}
+.timeline-project-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 4px 12px;
+	min-width: 0;
+	padding-bottom: 12px;
+	border-bottom: 1px solid var(--line);
+}
+.timeline-project-head h3 {
+	margin: 0;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+.timeline-project-head .hint {
+	font-size: 12px;
+	line-height: 16px;
+}
+.timeline-nodes {
+	list-style: none;
+	margin: 12px 0 0;
+	padding: 0 0 0 20px;
+	border-left: 1px solid var(--line);
+}
+.timeline-node {
+	position: relative;
+	min-width: 0;
+	margin-top: 8px;
+}
+.timeline-dot {
+	position: absolute;
+	top: 15px;
+	left: -25px;
+	width: 9px;
+	height: 9px;
+	border-radius: 50%;
+	background: var(--timeline-accent, var(--accent));
+	box-shadow: 0 0 0 3px var(--panel);
+}
+.timeline-node-toggle {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 4px 12px;
+	width: 100%;
+	min-width: 0;
+	padding: 8px 10px;
+	border: 1px solid transparent;
+	border-radius: var(--radius-md);
+	background: transparent;
+	color: var(--ink);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+.timeline-node-toggle:hover,
+.timeline-node-toggle:focus-visible {
+	background: var(--panel-deep);
+	border-color: var(--line);
+}
+.timeline-node-main {
+	display: grid;
+	gap: 2px;
+	min-width: 0;
+}
+.timeline-node-title {
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+.timeline-node-summary,
+.timeline-node-meta {
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 16px;
+	overflow-wrap: anywhere;
+}
+.timeline-node-action {
+	align-self: center;
+	color: var(--accent-ink);
+	font-size: 12px;
+	line-height: 16px;
+	white-space: nowrap;
+}
+.timeline-node-detail {
+	min-width: 0;
+	margin: 8px 0 12px;
+}
+.timeline-node-detail .ledger-record {
+	margin-bottom: 0;
+}
+@media (max-width: 700px) {
+	.timeline-node-toggle {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.timeline-node-action {
+		justify-self: start;
+	}
+}
 @media (prefers-reduced-motion: reduce) {
 	.project-node {
 		transition: none;

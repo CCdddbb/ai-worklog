@@ -174,7 +174,8 @@ def main(argv=None):
             sub.add_argument('--summary-provider')
             sub.add_argument('--summary-model')
             sub.add_argument('--auto-summarize', action='store_true', help='Stage summaries for new idle activity only')
-            sub.add_argument('--idle-minutes', type=int, default=10)
+            sub.add_argument('--idle-minutes', type=int, default=3,
+                             help='Minutes of quiet after a finished turn before recording; same default as the UI')
             sub.add_argument('--daily-summary-limit', type=int, default=None, help='Deprecated compatibility flag; ignored, summaries are unlimited')
         if name == 'review':
             boundary = sub.add_mutually_exclusive_group()
@@ -220,7 +221,7 @@ def main(argv=None):
     elif args.command == 'demo':
         print(json.dumps(demo(args, day), ensure_ascii=False))
     elif args.command == 'report':
-        text = (markdown(report_data(args.db, day, args.timezone), args.detail) if args.period == 'day'
+        text = (markdown(report_data(args.db, day, args.timezone), args.detail, args.db) if args.period == 'day'
                 else period_markdown(args.db, day, args.timezone, args.period, args.detail))
         if args.out:
             with Path(args.out).open('x', encoding='utf-8') as stream:
@@ -228,64 +229,18 @@ def main(argv=None):
         else:
             print(text, end='')
     elif args.command == 'purge':
+        from .purge import purge
         from .review import review_write_lock
         db = connect(args.db)
         try:
             with summary_write_lock(args.db), review_write_lock(args.db), db:
                 if args.summaries_only:
-                    changed = db.execute('DELETE FROM summaries').rowcount
-                    changed += db.execute("DELETE FROM session_names WHERE origin='summary'").rowcount
-                    changed += db.execute('DELETE FROM task_reviews').rowcount
-                    changed += db.execute('DELETE FROM task_git').rowcount
-                    db.execute('DELETE FROM tasks')
-                    db.execute('DELETE FROM work_records')
-                    db.execute('DELETE FROM work_record_history')
-                    for table in ['conversations', 'conversation_parts', 'conversation_part_records', 'conversation_progress',
-                                  'conversation_projection_jobs', 'conversation_sources', 'work_record_sessions',
-                                  'legacy_shared_records', 'legacy_context_jobs', 'local_migrations']:
-                        db.execute('DELETE FROM ' + table)
-                    db.execute('DELETE FROM task_automation')
-                    db.execute('DELETE FROM automatic_coverage')
-                    db.execute('DELETE FROM automation_scans')
-                    db.execute('DELETE FROM automation_settings')
-                    for table in ['reviews', 'review_cache', 'review_seen', 'review_state']:
-                        changed += db.execute('DELETE FROM ' + table).rowcount
+                    mode = 'summaries'
                 elif args.titles_only:
-                    changed = db.execute("UPDATE events SET title='' WHERE title != ''").rowcount
-                    changed += db.execute("DELETE FROM session_names WHERE origin!='manual'").rowcount
-                    db.execute("UPDATE conversations SET title='未命名对话'")
+                    mode = 'titles'
                 else:
-                    cutoff, _ = bounds(args.before, args.timezone)
-                    changed = db.execute('DELETE FROM events WHERE ts < ?', (cutoff,)).rowcount
-                    db.execute('DELETE FROM session_names WHERE session NOT IN (SELECT DISTINCT session FROM events)')
-                    changed += db.execute('DELETE FROM git_commits WHERE ts < ?', (cutoff,)).rowcount
-                    db.execute('DELETE FROM task_git WHERE commit_id NOT IN (SELECT id FROM git_commits)')
-                    db.execute('DELETE FROM work_records WHERE day<?', (args.before,))
-                    db.execute('DELETE FROM work_record_history WHERE record_id NOT IN (SELECT id FROM work_records)')
-                    db.execute('DELETE FROM reviews WHERE created_at < ?', (cutoff,))
-                    db.execute('DELETE FROM import_days WHERE day < ?', (args.before,))
-                    db.execute('DELETE FROM session_triage WHERE day < ?', (args.before,))
-                    db.execute('DELETE FROM review_cache')
-                    expired = [r[0] for r in db.execute('SELECT id FROM tasks WHERE start_ts<?', (cutoff,))]
-                    for task_id in expired:
-                        db.execute('DELETE FROM summaries WHERE task_id=?', (task_id,))
-                        db.execute('DELETE FROM task_reviews WHERE task_id=?', (task_id,))
-                        db.execute('DELETE FROM task_git WHERE task_id=?', (task_id,))
-                        db.execute('DELETE FROM tasks WHERE id=?', (task_id,))
-                    db.execute('DELETE FROM task_automation WHERE task_id NOT IN (SELECT id FROM tasks)')
-                    db.execute('DELETE FROM automatic_coverage WHERE task_id NOT IN (SELECT id FROM tasks)')
-                    db.execute('DELETE FROM activity_revisions WHERE day<?', (args.before,))
-                    db.execute('DELETE FROM automation_scans WHERE day<?', (args.before,))
-                    db.execute('DELETE FROM conversation_sources WHERE task_id NOT IN (SELECT id FROM tasks)')
-                    db.execute('DELETE FROM legacy_shared_records WHERE record_id NOT IN (SELECT id FROM work_records)')
-                    db.execute('DELETE FROM legacy_context_jobs WHERE job_id NOT IN (SELECT id FROM summaries)')
-                    for table in ['conversations', 'conversation_parts', 'conversation_part_records', 'conversation_progress',
-                                  'conversation_projection_jobs', 'work_record_sessions']:
-                        db.execute('DELETE FROM ' + table)
-                    from .conversations import backfill
-                    backfill(db)
-                    db.execute('DELETE FROM projects WHERE id NOT IN (SELECT DISTINCT project FROM events)')
-                    db.execute('DELETE FROM project_aliases WHERE project NOT IN (SELECT id FROM projects)')
+                    mode = 'before'
+                changed = purge(db, mode, args.before, args.timezone)
             print(json.dumps({'changed': changed, 'scope': 'local worklog database only'}))
         finally:
             db.close()

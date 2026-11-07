@@ -69,11 +69,20 @@ async function main() {
 	await page.locator("#automation-toggle").click();
 	await page.waitForFunction(
 		() =>
-			document.querySelectorAll("#automatic-records .ledger-record").length ===
+			document.querySelectorAll("#automatic-records .timeline-node").length ===
 			2,
 	);
 	assert.equal(await page.locator("#legacy-workflow").isVisible(), false);
 	assert.equal(await page.locator("#automatic-records textarea").count(), 0);
+	assert.equal(
+		await page.locator("#automatic-records .ledger-record").count(),
+		0,
+		"Full records must not ship with the compact timeline",
+	);
+	assert.equal(
+		await page.locator("#automatic-records .timeline-project").count(),
+		1,
+	);
 	assert.match(
 		await page.locator("#automatic-records").textContent(),
 		/修复登录回调/,
@@ -91,10 +100,7 @@ async function main() {
 		await page.locator("#time-pie svg.time-donut").getAttribute("aria-label"),
 		/活跃时长分布/,
 	);
-	assert.equal(
-		await page.locator("#time-pie .time-donut-segment").count(),
-		2,
-	);
+	assert.equal(await page.locator("#time-pie .time-donut-segment").count(), 2);
 	let data = await get("/api/work-records?date=2026-10-28");
 	assert.equal(data.stats.total, 2);
 	assert.equal(data.stats.archived, 2);
@@ -152,13 +158,24 @@ async function main() {
 	await page.locator('[data-view="archive"]').click();
 	await page.waitForFunction(
 		() =>
-			document.querySelectorAll("#archive-records .ledger-record").length === 2,
+			document.querySelectorAll("#archive-records .timeline-node").length === 2,
 	);
 	await page.locator("#archive-period").selectOption("week");
 	await page.locator("#archive-category").selectOption("bugfix");
 	await page.waitForFunction(
 		() =>
-			document.querySelectorAll("#archive-records .ledger-record").length === 1,
+			document.querySelectorAll("#archive-records .timeline-node").length === 1,
+	);
+	await page.locator("#archive-records .timeline-node-toggle").first().click();
+	await page.waitForSelector(
+		"#archive-records .timeline-node-detail .ledger-corrections",
+	);
+	assert.equal(
+		await page
+			.locator("#archive-records .timeline-node-detail .ledger-record")
+			.count(),
+		1,
+		"One opened node must load exactly one full record",
 	);
 	await page.locator("#archive-records .ledger-corrections > summary").click();
 	await page
@@ -166,12 +183,12 @@ async function main() {
 		.selectOption("docs");
 	await page.waitForFunction(
 		() =>
-			document.querySelectorAll("#archive-records .ledger-record").length === 0,
+			document.querySelectorAll("#archive-records .timeline-node").length === 0,
 	);
 	await page.locator("#archive-category").selectOption("");
 	await page.waitForFunction(
 		() =>
-			document.querySelectorAll("#archive-records .ledger-record").length === 2,
+			document.querySelectorAll("#archive-records .timeline-node").length === 2,
 	);
 	data = await get("/api/work-records?date=2026-10-28");
 	assert.ok(
@@ -194,7 +211,8 @@ async function main() {
 			.querySelector("#report-preview")
 			.textContent.includes("自动记录的任务、结果与耗时"),
 	);
-	assert.equal(await page.locator("#report-preview .ledger-record").count(), 2);
+	assert.equal(await page.locator("#report-preview .timeline-node").count(), 2);
+	assert.equal(await page.locator("#report-preview .ledger-record").count(), 0);
 	assert.match(
 		await page.locator("#report-text").textContent(),
 		/自动分类统计/,

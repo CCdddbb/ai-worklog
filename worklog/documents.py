@@ -125,6 +125,32 @@ def build_document(days, first, last, zone, period):
             'limitations': '状态按记录所属日期和当前人工结论汇总，不代表实际完成时间。未记录不等于没有工作；AI 草稿不自动算成果，引用有效不保证结论真实。'}
 
 
+def automatic_timeline_lines(timeline, stats, records=()):
+    """Delivery view: one compact line per record, grouped under its project."""
+    lines = [(f'- 活跃时长估计合计：{stats.get("active_seconds", 0) / 60:.1f} 分钟；'
+              '按项目归并展示，逐条过程、验证与下一步见工作台或完整审阅版。'), '']
+    nodes = {node['id']: node for node in (timeline or {}).get('nodes', [])}
+    projects = (timeline or {}).get('projects', [])
+    if not nodes:
+        lines += ['- 项目分组数据不可用，仅列出记录标题：',
+                  *['- ' + safe_text(record['title']) for record in records], '']
+        return lines
+    for project in projects:
+        shown = [nodes[node_id] for node_id in project['node_ids'] if node_id in nodes]
+        if not shown:
+            continue
+        lines += [(f'### {safe_text(project["name"])} · {len(shown)} 项 · '
+                   f'活跃时长估计 {project["active_seconds"] / 60:.1f} 分钟'), '']
+        for node in shown:
+            state = '已自动归档，非人工验收' if node['archived'] else '持续跟进'
+            suffix = '：' + safe_text(node['summary']) if node['summary'] else ''
+            lines.append(f'- {node["day"]} · {safe_text(node["title"])}'
+                         f'（{node["category_label"]} · {node["status_label"]} · {state} · '
+                         f'活跃时长估计 {node["active_seconds"] / 60:.1f} 分钟）{suffix}')
+        lines.append('')
+    return lines
+
+
 def clipboard_digest(document):
     """Paste-ready short text built from the same report document, never a second source of truth.
 
@@ -195,6 +221,8 @@ def report_document(path, day, zone, period='day', detail='brief'):
         data['task_summaries'] = [draft for draft in data.get('task_summaries', []) if draft['task_id'] not in represented or draft['task_id'] in manual]
     document = build_document(days, first.isoformat(), last.isoformat(), zone, period)
     document['automatic_work'] = automatic
+    from .timeline import timeline_data
+    document['automatic_timeline'] = timeline_data(path, day, zone, period)
     stats = document['automatic_work']['stats']
     if stats['total']:
         document['overview'] = (f'自动整理 {stats["total"]} 项任务记录，自动归档 {stats["archived"]} 项，'
@@ -213,12 +241,16 @@ def document_markdown(document):
     automatic = document.get('automatic_work', {})
     if automatic.get('stats', {}).get('total'):
         lines += ['## 自动记录的任务、结果与耗时', '', automatic['time_note'], '']
-        for record in automatic['records']:
-            lines += [f'### {record["day"]} · {safe_text(record["title"])}', '',
-                      f'- 分类：{record["category_label"]}；状态：{record["status_label"]}；'
-                      + ('已自动归档（非人工验收）' if record['archived'] else '持续跟进'),
-                      f'- 活跃时长估计：{record["active_seconds"] / 60:.1f} 分钟；记录跨度：{record["span_seconds"] / 60:.1f} 分钟。']
-            lines += business_lines({'work_items': [record['work']]}, '####')
+        if document.get('detail') == 'full':
+            for record in automatic['records']:
+                lines += [f'### {record["day"]} · {safe_text(record["title"])}', '',
+                          f'- 分类：{record["category_label"]}；状态：{record["status_label"]}；'
+                          + ('已自动归档（非人工验收）' if record['archived'] else '持续跟进'),
+                          f'- 活跃时长估计：{record["active_seconds"] / 60:.1f} 分钟；记录跨度：{record["span_seconds"] / 60:.1f} 分钟。']
+                lines += business_lines({'work_items': [record['work']]}, '####')
+        else:
+            lines += automatic_timeline_lines(document.get('automatic_timeline'), automatic['stats'],
+                                              automatic['records'])
         lines += ['## 自动分类统计', '', '| 分类 | 任务记录 | 活跃时长估计（分钟） |', '|---|---:|---:|']
         for category in automatic['categories']:
             lines.append(f'| {category["label"]} | {category["count"]} | {category["active_seconds"] / 60:.1f} |')

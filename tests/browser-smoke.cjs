@@ -413,7 +413,8 @@ async function main() {
 		document.querySelector("#week-range").textContent.includes("2026-10-26"),
 	);
 	await page.locator("#week-usage-chart button").nth(2).click();
-	assert.equal(await page.locator("#overview").isVisible(), true);
+	assert.equal(await page.locator("#weekly").isVisible(), true);
+	assert.equal(await page.locator("#overview").isVisible(), false);
 	assert.equal(await page.locator("#date").inputValue(), "2026-10-28");
 	await page.locator("[data-view=sources]").click();
 	assert.match(await page.locator("#coverage").textContent(), /synthetic/);
