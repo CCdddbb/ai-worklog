@@ -91,7 +91,7 @@ def excerpts(rows, roots, key):
     file_ids = {r['file_id'] for r in rows}
     found = {}
     for source, directory in roots.items():
-        if source not in ['pi', 'codex']:
+        if source not in ['pi', 'codex', 'workbuddy']:
             continue
         root = Path(directory).expanduser().resolve()
         for path in root.rglob('*.jsonl'):
@@ -99,12 +99,32 @@ def excerpts(rows, roots, key):
                 continue
             if identity(key, str(path))[:16] not in file_ids or path.stat().st_size > MAX_FILE:
                 continue
-            session = str(path)
+            session = path.stem if source == 'workbuddy' else str(path)
             provider = 'unknown'
             stats = dict.fromkeys(['truncated_files', 'oversized_lines', 'partial_lines', 'malformed_lines'], 0)
             for number, entry in records(path, stats):
                 typ = entry.get('type')
                 payload = mapping(entry.get('payload'))
+                if source == 'workbuddy':
+                    # WorkBuddy repeats sessionId on every line; event ids are
+                    # session:line:id, matching adapters.workbuddy_events. Only
+                    # message bodies are read: tool arguments, outputs and reasoning
+                    # text never enter excerpts.
+                    if typ == 'session-meta':
+                        continue
+                    sid = entry.get('sessionId')
+                    if isinstance(sid, str) and sid:
+                        session = sid
+                    if typ != 'message' or entry.get('role') not in ['user', 'assistant']:
+                        continue
+                    entry_id = entry.get('id')
+                    if not isinstance(entry_id, str):
+                        entry_id = 'line:' + str(number)
+                    rid = session + ':' + str(number) + ':' + entry_id
+                    eid = identity(key, source, rid)
+                    if eid in wanted:
+                        found[eid] = business_excerpt(text_blocks(entry.get('content')))
+                    continue
                 if source == 'pi' and typ == 'session':
                     session = str(entry.get('id') or path)
                     continue

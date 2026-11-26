@@ -37,7 +37,13 @@ class TaskBoard {
 		this.batchPending = false;
 		this.taskDataLoaded = false;
 		this.lastReadError = false;
+		this.totalTasks = 0;
+		this.windowLimit = 100;
+		this.hasMore = false;
+		this.loadingMore = false;
+		this.windowByDay = new Map();
 		$("task-new").addEventListener("click", () => this.openCreation());
+		$("task-load-more").addEventListener("click", () => this.loadMore());
 		$("task-create-discard").addEventListener("click", () => {
 			if (this.creating)
 				return this.notice("创建请求正在处理，请等待结果后再放弃草稿。");
@@ -123,7 +129,10 @@ class TaskBoard {
 			this.tasks = [];
 			this.taskDataLoaded = false;
 			this.totalTasks = 0;
+			this.hasMore = false;
+			this.windowLimit = 100;
 			this.indexSignature = null;
+			this.renderLoadMore();
 			this.pending = false;
 			this.staleCards.clear();
 			for (const id of [
@@ -205,10 +214,14 @@ class TaskBoard {
 		const day = this.current.date;
 		const serial = ++this.refreshSerial;
 		const wasPending = this.pending;
+		const state = this.windowState(day);
+		const params = new URLSearchParams({
+			date: day,
+			limit: String(state.limit),
+		});
+		for (const id of state.pins) params.append("ids", id);
 		try {
-			const value = await (
-				await api(`/api/tasks?date=${encodeURIComponent(day)}`)
-			).json();
+			const value = await (await api(`/api/tasks?${params}`)).json();
 			if (this.current.date !== day || serial !== this.refreshSerial) return;
 			this.enabled = value.enabled;
 			this.autoEnabled = Boolean(value.automation?.enabled);
@@ -225,6 +238,9 @@ class TaskBoard {
 				this.lastReadError = false;
 			}
 			this.totalTasks = value.total_tasks ?? value.tasks.length;
+			this.windowLimit = value.window_limit ?? state.limit;
+			this.hasMore = Boolean(value.has_more);
+			this.renderLoadMore();
 			this.allowExcerpts = value.allow_excerpts;
 			if (value.llm_enabled && !this.modelSettingsInitialized) {
 				$("summary-backend").value =
@@ -350,11 +366,17 @@ class TaskBoard {
 			button.disabled = false;
 			button.setAttribute("aria-pressed", String(this.taskFilter === filter));
 		}
-		$("task-index-count").textContent =
-			`显示 ${filtered.length} / ${tasks.length} 条已载入记录` +
-			(this.totalTasks > tasks.length
-				? `；当日共 ${this.totalTasks} 条，当前最多载入 100 条，搜索仅限已载入部分。`
-				: "");
+		let scope = `显示 ${filtered.length} / ${tasks.length} 条已载入记录`;
+		if (this.totalTasks > tasks.length || this.hasMore) {
+			scope += `；当日共 ${this.totalTasks} 条，窗口为最近 ${this.windowLimit} 条`;
+			const pinnedExtra = Math.max(0, tasks.length - this.windowLimit);
+			if (pinnedExtra)
+				scope += `，另有 ${pinnedExtra} 条按链接定位`;
+			scope += this.hasMore
+				? "；可点「载入更多」继续扩展，搜索与筛选仅覆盖已载入部分。"
+				: "。";
+		}
+		$("task-index-count").textContent = scope;
 		const signature = JSON.stringify([
 			this.selectedTaskId,
 			[...this.batchSelection].sort(),
@@ -617,7 +639,70 @@ class TaskBoard {
 			this.notice(`删除失败：${error.message}`);
 		}
 	}
+	windowState(day) {
+		let state = this.windowByDay.get(day);
+		if (!state) {
+			state = { limit: 100, pins: new Set() };
+			this.windowByDay.set(day, state);
+		}
+		return state;
+	}
+	renderLoadMore() {
+		const button = $("task-load-more");
+		const note = $("task-window-note");
+		const atCap = this.windowLimit >= 500;
+		const remaining = Math.max(0, this.totalTasks - (this.tasks?.length || 0));
+		button.classList.toggle("hidden", !this.hasMore);
+		button.disabled = this.loadingMore || atCap;
+		button.textContent = this.loadingMore
+			? "正在载入…"
+			: atCap
+				? "已达单次载入上限 500 条"
+				: `载入更多（还有 ${remaining} 条）`;
+		note.textContent =
+			atCap && this.hasMore
+				? "单次最多载入 500 条；更早的记录可通过工作报告或自动记录里的「查看原始依据」按 ID 精确定位。"
+				: "";
+		note.classList.toggle("hidden", !note.textContent);
+	}
+	async loadMore() {
+		if (!this.current || this.loadingMore || !this.hasMore) return;
+		const state = this.windowState(this.current.date);
+		if (state.limit >= 500) return;
+		this.loadingMore = true;
+		state.limit = Math.min(500, state.limit + 100);
+		this.renderLoadMore();
+		try {
+			await this.refresh();
+		} finally {
+			this.loadingMore = false;
+			this.renderLoadMore();
+		}
+	}
+	async ensureTask(id, day = this.current?.date) {
+		if (!id || !day || this.current?.date !== day) return false;
+		if (this.tasks?.some((task) => task.id === id)) return true;
+		const state = this.windowState(day);
+		// The API accepts at most 20 pinned ids; keep the most recently used ones.
+		if (state.pins.size >= 20)
+			state.pins.delete(state.pins.values().next().value);
+		state.pins.add(id);
+		await this.refresh();
+		const found = Boolean(this.tasks?.some((task) => task.id === id));
+		if (!found) {
+			state.pins.delete(id);
+			this.notice(
+				"未在当前日期找到这条工作记录；它可能已被删除或属于其他日期。",
+			);
+		}
+		return found;
+	}
 	selectTask(id) {
+		const task = this.tasks?.find((item) => item.id === id);
+		if (task && !this.filteredTasks(this.tasks).includes(task)) {
+			this.taskFilter = task.archived ? "archived" : "all";
+			$("task-search").value = "";
+		}
 		this.selectedTaskId = id;
 		this.closePreview(false);
 		this.reconcileTasks(this.tasks || []);

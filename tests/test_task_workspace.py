@@ -105,6 +105,117 @@ class TaskWorkspaceTests(unittest.TestCase):
             finally:
                 service.close()
 
+    def test_list_window_reports_its_limit_and_whether_more_exist(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'tasks.sqlite3'
+            day = '2026-10-28'
+            start, _ = bounds(day, 'UTC')
+            service = TaskService(path, None, zone='UTC', clock=lambda: start + 12 * 3600)
+            try:
+                db = connect(path)
+                with db:
+                    db.executemany('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?)',
+                        [(f'{index:032x}', f'合成记录 {index}', day, '[]', start, None, 'open', start + index)
+                         for index in range(120)])
+                db.close()
+                small = service.list(day, limit=10)
+                self.assertEqual(small['window_limit'], 10)
+                self.assertTrue(small['has_more'])
+                self.assertEqual(small['total_tasks'], 120)
+                self.assertEqual(len(small['tasks']), 10)
+                self.assertEqual(small['tasks'][0]['title'], '合成记录 119')
+                full = service.list(day, limit=500)
+                self.assertEqual(len(full['tasks']), 120)
+                self.assertFalse(full['has_more'])
+            finally:
+                service.close()
+
+    def test_list_pins_requested_ids_outside_window_without_duplicates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'tasks.sqlite3'
+            day = '2026-10-28'
+            start, _ = bounds(day, 'UTC')
+            service = TaskService(path, None, zone='UTC', clock=lambda: start + 12 * 3600)
+            try:
+                db = connect(path)
+                with db:
+                    db.executemany('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?)',
+                        [(f'{index:032x}', f'合成记录 {index}', day, '[]', start, None, 'open', start + index)
+                         for index in range(120)])
+                db.close()
+                oldest, newest = f'{0:032x}', f'{119:032x}'
+                pinned = service.list(day, limit=10, ids=[oldest, oldest])
+                self.assertEqual(len(pinned['tasks']), 11)
+                self.assertEqual(sum(task['id'] == oldest for task in pinned['tasks']), 1)
+                self.assertEqual(pinned['window_limit'], 10)
+                self.assertTrue(pinned['has_more'])
+                self.assertEqual(pinned['tasks'][-1]['id'], oldest)
+                self.assertEqual(len(service.list(day, limit=10, ids=[newest])['tasks']), 10)
+                for bad in (0, 501, 'abc', None):
+                    with self.subTest(limit=bad):
+                        with self.assertRaises(ValueError):
+                            service.list(day, limit=bad)
+                with self.assertRaises(ValueError):
+                    service.list(day, ids=oldest)
+                with self.assertRaises(ValueError):
+                    service.list(day, ids=['x' * 65])
+                with self.assertRaises(ValueError):
+                    service.list(day, ids=[f'{index:032x}' for index in range(21)])
+            finally:
+                service.close()
+
+    def test_tasks_api_accepts_limit_and_repeated_or_comma_separated_ids(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'tasks.sqlite3'
+            day = '2026-10-28'
+            start, _ = bounds(day, 'UTC')
+            service = TaskService(path, None, zone='UTC', clock=lambda: start + 12 * 3600)
+            try:
+                db = connect(path)
+                with db:
+                    db.executemany('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?)',
+                        [(f'{index:032x}', f'合成记录 {index}', day, '[]', start, None, 'open', start + index)
+                         for index in range(12)])
+                db.close()
+                server = make_server(path, day, 'UTC', 0, task_service=service)
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    def call(query):
+                        request = urllib.request.Request(
+                            f'http://127.0.0.1:{server.server_port}/api/tasks?{query}',
+                            headers={'Authorization': 'Bearer ' + server.access_token})
+                        try:
+                            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
+                                    request, timeout=3) as response:
+                                return response.status, json.load(response)
+                        except urllib.error.HTTPError as error:
+                            return error.code, json.load(error)
+
+                    oldest, second, newest = f'{0:032x}', f'{1:032x}', f'{11:032x}'
+                    status, window = call('limit=5')
+                    self.assertEqual(status, 200)
+                    self.assertEqual(window['window_limit'], 5)
+                    self.assertTrue(window['has_more'])
+                    self.assertEqual(window['total_tasks'], 12)
+                    self.assertEqual(len(window['tasks']), 5)
+                    status, pinned = call(f'limit=5&ids={oldest}')
+                    self.assertEqual(status, 200)
+                    self.assertEqual(len(pinned['tasks']), 6)
+                    self.assertIn(oldest, [task['id'] for task in pinned['tasks']])
+                    self.assertEqual(len(call(f'limit=5&ids={oldest},{newest}')[1]['tasks']), 6)
+                    self.assertEqual(len(call(f'limit=5&ids={oldest}&ids={second}')[1]['tasks']), 7)
+                    for query in ('limit=0', 'limit=501', 'limit=abc',
+                                  'limit=5&ids=' + ','.join(f'{index:032x}' for index in range(21))):
+                        with self.subTest(query=query[:24]):
+                            self.assertEqual(call(query)[0], 400)
+                finally:
+                    server.shutdown()
+                    server.server_close()
+                    thread.join()
+            finally:
+                service.close()
+
 
 if __name__ == '__main__':
     unittest.main()

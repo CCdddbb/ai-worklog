@@ -5,7 +5,7 @@
 本地命令主动回顾日志，而非监控整机，也不会检测用户是否真的关闭了会话。
 首次 `--start-now` 是起点，以后每次成功回顾消费明确的一组事件；无需网页或常驻进程。
 默认入口 `bin/worklog-review` 使用仓库 `data/review.sqlite3`，只选择用户的 Pi 会话目录。
-Codex 可显式加入，来源目录组合各有独立状态，不能默默扩大旧授权。
+Codex 与 WorkBuddy（云鼎专享版）都可显式加入（`--codex-dir` / `--workbuddy-dir`），来源目录组合各有独立状态，不能默默扩大旧授权。
 
 ```bash
 ./bin/worklog-review --start-now --allow-excerpts
@@ -33,6 +33,8 @@ python3 app.py review --db data/review-both.sqlite3 \
 python3 app.py review --db data/review-both.sqlite3 \
   --pi-dir "$HOME/.pi/agent/sessions" --codex-dir "$HOME/.codex/sessions"
 ```
+
+回顾 WorkBuddy 专享版时，把 `--workbuddy-dir "$HOME/.workbuddyydkj/projects"` 同时加到首次起点与每次回顾命令；`bin/worklog-review` 默认仍只带 Pi 目录。
 
 ## 输出与“流式”的含义
 
@@ -80,7 +82,7 @@ python3 app.py review --db data/review-both.sqlite3 \
 python3 app.py purge --db data/review.sqlite3 --summaries-only
 ```
 
-该操作保留匿名导入事件，后续回顾需要重新显式初始化起点；不会清理原始 Pi/Codex 日志。
+该操作保留匿名导入事件，后续回顾需要重新显式初始化起点；不会清理原始 Pi/Codex/WorkBuddy 日志。
 `purge --before` 也会删除该日期以前生成的回顾及全部回顾结果缓存；保留去重台账避免把旧事件再次当新工作。
 
 ## 验证

@@ -60,19 +60,33 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.get('/../../etc/passwd')[0], 404)
         self.assertEqual(self.get('/identity.key')[0], 404)
 
-    def test_clipboard_report_endpoint_returns_plain_digest(self):
-        status, headers, body = self.get('/api/report?detail=clipboard')
-        self.assertEqual(status, 200)
-        self.assertIn('text/plain', headers['Content-Type'])
-        text = body.decode()
-        self.assertIn('【AI 工作日报】', text)
-        self.assertNotIn('## 活动事实', text)
+    def test_clipboard_report_endpoint_returns_plain_digest_for_every_period(self):
+        expected = {
+            'day': ('【AI 工作日报】2026-01-02', '今日完成'),
+            'week': ('【AI 工作周报】2025-12-29 至 2026-01-04', '本期完成'),
+            'month': ('【AI 工作月报】2026-01-01 至 2026-01-31', '本期完成'),
+        }
+        for period, (heading, section) in expected.items():
+            with self.subTest(period=period):
+                status, headers, body = self.get(f'/api/report?period={period}&detail=clipboard')
+                self.assertEqual(status, 200)
+                self.assertIn('text/plain', headers['Content-Type'])
+                text = body.decode()
+                self.assertIn(heading, text)
+                self.assertIn(section + '：', text)
+                self.assertNotIn('## 活动事实', text)
+                self.assertNotIn('数据覆盖与口径', text)
         self.assertEqual(self.get('/api/report?detail=bogus')[0], 400)
+        self.assertEqual(self.get('/api/report?period=bogus&detail=clipboard')[0], 400)
 
-    def test_workbench_exposes_daily_clipboard_button(self):
+    def test_workbench_exposes_period_clipboard_controls(self):
         status, _, body = self.get('/', auth=False)
         self.assertEqual(status, 200)
-        self.assertIn(b'id="copy-daily"', body)
+        self.assertIn(b'id="copy-report"', body)
+        self.assertIn(b'id="copy-period"', body)
+        self.assertIn(b'value="week"', body)
+        self.assertIn(b'value="month"', body)
+        self.assertNotIn(b'id="copy-daily"', body)
 
     def test_onboarding_endpoint_is_private_and_empty_by_default(self):
         self.assertEqual(self.get('/api/onboarding', auth=False)[0], 401)
@@ -125,6 +139,25 @@ class WebTests(unittest.TestCase):
         self.assertNotIn('localStorage', script)
         self.assertIn('textContent', script)
         self.assertIn('detail: "clipboard"', script)
+        self.assertIn('$("copy-period").value', script)
+        self.assertNotIn('period: "day", detail: "clipboard"', script)
+
+    def test_task_window_controls_and_deep_links_are_wired(self):
+        html = (ROOT / 'static/index.html').read_text()
+        self.assertIn('id="task-load-more"', html)
+        self.assertIn('id="task-window-note"', html)
+        board = (ROOT / 'static/tasks.js').read_text()
+        for fragment in ('windowState(day)', 'renderLoadMore()', 'async loadMore()',
+                         'async ensureTask(', 'value.has_more', 'window_limit',
+                         'new URLSearchParams', '载入更多'):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, board)
+        self.assertNotIn('当前最多载入 100 条', board)
+        reports = (ROOT / 'static/reports.js').read_text()
+        self.assertNotIn('当前列表最多展示 100 项', reports)
+        sources = '\n'.join((ROOT / f'static/{name}').read_text()
+                            for name in ('app.js', 'ledger.js', 'reports.js'))
+        self.assertEqual(sources.count('.ensureTask('), 3)
 
 
 class CliTests(unittest.TestCase):

@@ -113,7 +113,8 @@ def write_new(path, text):
 
 
 def review(args, emit, progress, runner_factory=default_review_runner, clock=time.time):
-    roots = {name: path for name, path in [('pi', args.pi_dir), ('codex', args.codex_dir)] if path}
+    roots = {name: path for name, path in [('pi', args.pi_dir), ('codex', args.codex_dir),
+                                           ('workbuddy', getattr(args, 'workbuddy_dir', None))] if path}
     if not 1 <= args.batch_limit <= 12:
         raise ReviewError('--batch-limit 需要在 1 到 12 之间。')
     cutoff = clock()  # New activity appearing during model calls waits until the next invocation.
@@ -129,7 +130,7 @@ def review(args, emit, progress, runner_factory=default_review_runner, clock=tim
                 emit(row['output'])
                 return {'status': 'last'}
             if not roots:
-                raise ReviewError('请显式指定 --pi-dir 和/或 --codex-dir。')
+                raise ReviewError('请显式指定 --pi-dir、--codex-dir 和/或 --workbuddy-dir。')
             for root in roots.values():
                 if not Path(root).expanduser().is_dir():
                     raise ReviewError('日志目录不存在；请检查来源参数。')

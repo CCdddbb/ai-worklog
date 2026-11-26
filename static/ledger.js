@@ -246,7 +246,12 @@ function workRecordCard(record, { controls = true, full = false } = {}) {
 				$("date").value = record.day;
 				await load();
 				await window.worklogTasks.refresh();
+				const found = await window.worklogTasks.ensureTask(
+					record.source_task_id,
+					record.day,
+				);
 				await showView(document.querySelector('[data-view="tasks"]'));
+				if (!found) return;
 				window.worklogTasks.selectTask(record.source_task_id);
 				await window.worklogTasks.preview(
 					record.source_task_id,

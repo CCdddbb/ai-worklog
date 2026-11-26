@@ -18,7 +18,7 @@ STATIC = Path(__file__).resolve().parents[1] / 'static'
 MAX_JSON_BODY = 65536
 
 
-def make_server(db_path, day, zone, port=8766, task_service=None):
+def make_server(db_path, day, zone, port=8766, task_service=None, agent_config=None):
     token = secrets.token_urlsafe(32)
 
     class Handler(BaseHTTPRequestHandler):
@@ -57,7 +57,7 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                       '/tasks.js': ('tasks.js', 'text/javascript'), '/dashboard.js': ('dashboard.js', 'text/javascript'),
                       '/conversations.js': ('conversations.js', 'text/javascript'), '/ledger.js': ('ledger.js', 'text/javascript'), '/timeline.js': ('timeline.js', 'text/javascript'), '/weekly.js': ('weekly.js', 'text/javascript'), '/reports.js': ('reports.js', 'text/javascript'),
                       '/ledger.css': ('ledger.css', 'text/css'), '/style.css': ('style.css', 'text/css'), '/workbench.css': ('workbench.css', 'text/css'),
-                      '/logo.svg': ('logo.svg', 'image/svg+xml'),
+                      '/logo.svg': ('logo.svg', 'image/svg+xml'), '/agent.js': ('agent.js', 'text/javascript'), '/polish.css': ('polish.css', 'text/css'),
                       '/fonts/Manrope-Variable.ttf': ('fonts/Manrope-Variable.ttf', 'font/ttf')}
             if not self.access(private=url.path not in assets):
                 return
@@ -65,7 +65,7 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                 name, mime = assets[url.path]
                 self.send(200, (STATIC / name).read_bytes(), mime + '; charset=utf-8')
                 return
-            if url.path not in ['/api/day', '/api/week', '/api/report', '/api/report-view', '/api/tasks', '/api/task-preview', '/api/work-records', '/api/work-record-history', '/api/work-record-detail', '/api/work-timeline', '/api/conversations', '/api/conversation-progress', '/api/onboarding']:
+            if url.path not in ['/api/day', '/api/week', '/api/report', '/api/report-view', '/api/tasks', '/api/task-preview', '/api/work-records', '/api/work-record-history', '/api/work-record-detail', '/api/work-timeline', '/api/conversations', '/api/conversation-progress', '/api/onboarding', '/api/agent', '/api/digest']:
                 self.send(404, {'error': 'not_found'})
                 return
             try:
@@ -74,7 +74,17 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                 if len(target_day) != 10:
                     raise ValueError('Invalid date')
                 bounds(target_day, zone)
-                if url.path == '/api/onboarding':
+                if url.path == '/api/agent':
+                    from .agent import list_digests
+                    self.send(200, {'enabled': bool(agent_config), 'digests': list_digests(agent_config) if agent_config else [],
+                                    'digest_hour': agent_config['digest_hour'] if agent_config else None,
+                                    'idea': bool(agent_config and agent_config.get('idea'))})
+                elif url.path == '/api/digest':
+                    from .agent import read_digest
+                    if not agent_config:
+                        raise ValueError('Agent digests are not enabled')
+                    self.send(200, read_digest(agent_config, query.get('name', [''])[0]), 'text/plain; charset=utf-8')
+                elif url.path == '/api/onboarding':
                     from .onboarding import onboarding_state
                     self.send(200, onboarding_state(db_path, target_day, zone))
                 elif url.path == '/api/conversations':
@@ -102,7 +112,12 @@ def make_server(db_path, day, zone, port=8766, task_service=None):
                 elif url.path == '/api/report-view':
                     self.send(200, report_document(db_path, target_day, zone, query.get('period', ['day'])[0], query.get('detail', ['brief'])[0]))
                 elif url.path == '/api/tasks':
-                    self.send(200, task_service.list(target_day) if task_service else {'enabled': False, 'tasks': []})
+                    if not task_service:
+                        self.send(200, {'enabled': False, 'tasks': []})
+                    else:
+                        # Repeated and comma-separated ids are both accepted for deep links.
+                        pinned = [item for value in query.get('ids', []) for item in value.split(',') if item]
+                        self.send(200, task_service.list(target_day, query.get('limit', [100])[0], pinned))
                 elif url.path == '/api/task-preview':
                     if not task_service:
                         self.send(409, {'error': 'summary_not_enabled'})

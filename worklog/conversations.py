@@ -1,6 +1,8 @@
 """Cumulative project/conversation tree; daily ledger remains a view of daily changes."""
 import hashlib
 import json
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from collections import defaultdict
 from difflib import SequenceMatcher
 
@@ -107,9 +109,9 @@ def tree_data(path, day, zone):
         projects = defaultdict(list)
         parts_count = 0
         known = {row['session']: dict(row) for row in db.execute('SELECT * FROM conversations')}
-        for row in db.execute("SELECT session,project,MIN(ts) AS first_ts,MAX(ts) AS last_ts FROM events WHERE source IN ('pi','codex') GROUP BY session"):
+        for row in db.execute("SELECT session,project,MIN(ts) AS first_ts,MAX(ts) AS last_ts FROM events WHERE source IN ('pi','codex','workbuddy') GROUP BY session"):
             if row['session'] not in known:
-                known[row['session']] = dict(row, title='等待自动总结的对话')
+                known[row['session']] = dict(row, title='未总结对话 · ' + datetime.fromtimestamp(row['first_ts'], ZoneInfo(zone)).strftime('%m-%d %H:%M'))
             else:
                 known[row['session']]['project'] = row['project']
                 known[row['session']]['last_ts'] = max(known[row['session']]['last_ts'], row['last_ts'])

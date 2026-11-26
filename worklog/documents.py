@@ -155,7 +155,8 @@ def clipboard_digest(document):
     """Paste-ready short text built from the same report document, never a second source of truth.
 
     Deliberately omits usage statistics, coverage notes and evidence appendices: those belong in the
-    delivery report, not in the text pasted into a company daily-report form.
+    delivery report, not in the text pasted into a company daily-report form. Long periods get a
+    higher item cap, and any omitted items are reported explicitly instead of disappearing silently.
     """
     automatic = document.get('automatic_work') or {}
     done, ongoing, blocked, next_steps = [], [], [], []
@@ -181,19 +182,29 @@ def clipboard_digest(document):
             blocked.append(line)
         elif status == 'in_progress':
             ongoing.append(line)
-    for action in document.get('next_steps', [])[:12]:
-        next_steps.append(f'{safe_text(action["title"])}：{safe_text(action["text"])}')
+    period = document.get('period', 'day')
+    entry_limit = 30 if period == 'day' else 60
+    action_limit = 12 if period == 'day' else 24
+    actions = [f'{safe_text(action["title"])}：{safe_text(action["text"])}'
+               for action in document.get('next_steps', [])]
+    next_steps = list(dict.fromkeys(actions))
+    omitted_actions = len(next_steps) - action_limit
+    if omitted_actions > 0:
+        next_steps = next_steps[:action_limit]
+        next_steps.append(f'另有 {omitted_actions} 条下一步未列出，详见工作报告。')
     totals = document.get('totals', {})
     if totals.get('attention') or totals.get('needs_review'):
         next_steps.append(f'另有 {totals.get("attention", 0)} 条需关注、{totals.get("needs_review", 0)} 条待核对，详见工作报告。')
     span = document['first'] if document['first'] == document['last'] else f'{document["first"]} 至 {document["last"]}'
-    heading = '今日完成' if document['period'] == 'day' else '本期完成'
+    heading = '今日完成' if period == 'day' else '本期完成'
     lines = [f'【{document["title"]}】{span}']
     for label, entries in [(heading, done), ('进行中', ongoing), ('风险与阻塞', blocked), ('下一步与待核对', next_steps)]:
-        unique = list(dict.fromkeys(entries))[:30]
+        unique = list(dict.fromkeys(entries))
         lines.append(label + '：')
         if unique:
-            lines.extend('- ' + entry for entry in unique)
+            lines.extend('- ' + entry for entry in unique[:entry_limit])
+            if len(unique) > entry_limit:
+                lines.append(f'- 另有 {len(unique) - entry_limit} 条未列出，详见工作报告。')
         else:
             lines.append('- 无')
     if not any((done, ongoing, blocked, next_steps)):

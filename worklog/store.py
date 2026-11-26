@@ -52,6 +52,8 @@ def connect(path):
         recorded_at REAL NOT NULL,PRIMARY KEY(part_id,job_id))''')
     db.execute('CREATE INDEX IF NOT EXISTS conversation_progress_day ON conversation_progress(day)')
     db.execute('CREATE TABLE IF NOT EXISTS conversation_projection_jobs (job_id TEXT PRIMARY KEY)')
+    db.execute('CREATE TABLE IF NOT EXISTS ide_activity (id TEXT PRIMARY KEY, project_name TEXT NOT NULL, ts REAL NOT NULL)')
+    db.execute('CREATE INDEX IF NOT EXISTS ide_activity_ts ON ide_activity(ts)')
     db.execute('CREATE TABLE IF NOT EXISTS local_migrations (name TEXT PRIMARY KEY)')
     db.execute('CREATE TABLE IF NOT EXISTS legacy_shared_records (record_id TEXT PRIMARY KEY)')
     db.execute('CREATE TABLE IF NOT EXISTS legacy_context_jobs (job_id TEXT PRIMARY KEY)')

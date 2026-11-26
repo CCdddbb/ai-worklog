@@ -21,16 +21,18 @@ async function reportReview(record) {
 	$("date").value = record.date;
 	await load();
 	await window.worklogTasks.refresh();
+	const found = await window.worklogTasks.ensureTask(record.id, record.date);
 	const task = window.worklogTasks.tasks?.find((item) => item.id === record.id);
-	if (task) window.worklogTasks.openReview(task, { remember: false });
-	else {
-		showView(document.querySelector('[data-view="tasks"]'), {
-			remember: false,
-		});
-		window.worklogTasks.notice(
-			"请在所选日期的任务记录中查找这项工作。当前列表最多展示 100 项。",
-		);
+	if (found && task) {
+		window.worklogTasks.openReview(task, { remember: false });
+		return;
 	}
+	showView(document.querySelector('[data-view="tasks"]'), {
+		remember: false,
+	});
+	window.worklogTasks.notice(
+		"未在当前日期定位到这条工作记录；它可能已被删除或属于其他日期。",
+	);
 }
 function reportEvidence(record, ids) {
 	const evidence = record.evidence.filter((item) => ids.includes(item.id));

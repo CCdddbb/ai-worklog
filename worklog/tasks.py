@@ -225,8 +225,30 @@ class TaskService:
             finally:
                 db.close()
 
-    def list(self, day):
+    @staticmethod
+    def _window(limit, ids):
+        """Bound the loaded window and allow a few explicitly requested records outside it."""
+        try:
+            size = int(limit)
+        except (TypeError, ValueError):
+            raise ValueError('Invalid task window') from None
+        if not 1 <= size <= 500:
+            raise ValueError('Invalid task window')
+        if ids is not None and not isinstance(ids, (list, tuple)):
+            raise ValueError('Invalid task id list')
+        pinned = []
+        for value in ids or []:
+            if not isinstance(value, str) or not 1 <= len(value) <= 64:
+                raise ValueError('Invalid task id')
+            if value not in pinned:
+                pinned.append(value)
+        if len(pinned) > 20:
+            raise ValueError('Too many task ids')
+        return size, pinned
+
+    def list(self, day, limit=100, ids=None):
         bounds(day, self.zone)
+        size, pinned = self._window(limit, ids)
         db = connect(self.path)
         try:
             tasks = []
@@ -234,7 +256,18 @@ class TaskService:
             commits = [dict(row) for row in db.execute(
                 'SELECT id,subject,files_changed,additions,deletions FROM git_commits WHERE ts>=? AND ts<? ORDER BY ts DESC,id',
                 (start, end))]
-            for row in db.execute('SELECT * FROM tasks WHERE day=? ORDER BY created_at DESC LIMIT 100', (day,)):
+            rows = [dict(row) for row in db.execute(
+                'SELECT * FROM tasks WHERE day=? ORDER BY created_at DESC LIMIT ?', (day, size))]
+            window_count = len(rows)
+            if pinned:
+                marks = ','.join('?' for _ in pinned)
+                seen = {row['id'] for row in rows}
+                extra = [dict(row) for row in db.execute(
+                    f'SELECT * FROM tasks WHERE day=? AND id IN ({marks})', (day, *pinned))]
+                rows.extend(row for row in extra if row['id'] not in seen)
+                # Stable sort keeps the original window order wherever created_at ties.
+                rows.sort(key=lambda row: row['created_at'], reverse=True)
+            for row in rows:
                 task = dict(row)
                 task['sessions'] = json.loads(task['sessions'])
                 task['automatically_managed'] = bool(db.execute('SELECT 1 FROM task_automation WHERE task_id=?', (task['id'],)).fetchone())
@@ -275,7 +308,9 @@ class TaskService:
                 tasks.append(task)
             today = datetime.fromtimestamp(self.clock(), ZoneInfo(self.zone)).date().isoformat()
             runs_today = db.execute('SELECT COUNT(*) FROM summaries WHERE started_at>=? AND started_at<?', bounds(today, self.zone)).fetchone()[0]
-            return {'tasks': tasks, 'total_tasks': db.execute('SELECT COUNT(*) FROM tasks WHERE day=?', (day,)).fetchone()[0],
+            total = db.execute('SELECT COUNT(*) FROM tasks WHERE day=?', (day,)).fetchone()[0]
+            return {'tasks': tasks, 'total_tasks': total,
+                    'window_limit': size, 'has_more': total > window_count,
                     'commits': commits, 'enabled': True, 'llm_enabled': self.runner is not None,
                     'auto': self.auto, 'allow_excerpts': self.allow_excerpts,
                     'runs_today': runs_today,

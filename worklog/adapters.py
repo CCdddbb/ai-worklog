@@ -4,7 +4,16 @@ import json
 import re
 from pathlib import Path
 
-from .core import identity, label, mapping, timestamp, usage, user_title
+from .core import (
+    count,
+    identity,
+    label,
+    mapping,
+    redact_title,
+    timestamp,
+    usage,
+    user_title,
+)
 
 MAX_FILE = 64 * 1024 * 1024
 MAX_LINE = 2 * 1024 * 1024
@@ -217,6 +226,95 @@ def codex_events(path, salt, stats, titles=False, window=None):
     return result + (direct if direct else legacy)
 
 
+WORKBUDDY_STATUS = {'completed': 'stop', 'cancelled': 'aborted', 'incomplete': 'error'}
+
+
+def workbuddy_status(value):
+    return WORKBUDDY_STATUS.get(value, 'observed')
+
+
+def workbuddy_usage(value):
+    """Map WorkBuddy usage snapshots onto the shared input/output/cache fields.
+
+    inputTokens already includes cached tokens; inputTokensDetails carries the cached
+    part. Only numeric metadata is read, never rawUsage's text-bearing extras.
+    """
+    u = mapping(value)
+    details = u.get('inputTokensDetails')
+    read = 0
+    if isinstance(details, list):
+        for item in details:
+            if isinstance(item, dict):
+                read += count(item.get('cached_tokens'))
+    raw = mapping(u.get('rawUsage'))
+    write = count(raw.get('prompt_cache_write_tokens')) + count(raw.get('cache_creation_input_tokens'))
+    total_input = count(u.get('inputTokens'))
+    read = min(read, total_input)
+    write = min(write, total_input - read)
+    return usage({'input': total_input - read - write, 'output': count(u.get('outputTokens')),
+                  'cacheRead': read, 'cacheWrite': write})
+
+
+def workbuddy_events(path, salt, stats, titles=False, window=None):
+    """Read a WorkBuddy session log: millisecond epochs, stable sessionId, cwd per line.
+
+    Message bodies, tool arguments, outputs and reasoning text are never retained.
+    A function_call carries a per-model-call usage snapshot, so it yields both a
+    tool marker and a usage event; the latter gets its own record id.
+    """
+    session, project = path.stem, 'unknown'
+    file_id = identity(salt, str(path))[:16]
+    result = []
+    for number, entry in records(path, stats, window):
+        typ = entry.get('type')
+        if typ == 'session-meta':
+            continue
+        sid = entry.get('sessionId')
+        if isinstance(sid, str) and sid:
+            session = sid
+        cwd = entry.get('cwd')
+        if isinstance(cwd, str) and cwd:
+            project = cwd
+        ts = timestamp(entry.get('timestamp'))
+        if ts is None:
+            stats['invalid_timestamps'] += 1
+            continue
+        data = mapping(entry.get('providerData'))
+        provider = 'workbuddy'
+        model = label(data.get('model') or data.get('requestModelId'))
+        entry_id = entry.get('id')
+        if not isinstance(entry_id, str):
+            entry_id = 'line:' + str(number)
+        # WorkBuddy reuses one id across a message and its function_call rows, and
+        # some rows carry no id at all. The line number keeps each event distinct
+        # while staying stable for identical copies of the same append-only log.
+        record_id = session + ':' + str(number) + ':' + entry_id
+        if typ == 'message':
+            role = entry.get('role')
+            if role == 'user':
+                result.append(event(salt, 'workbuddy', session, project, record_id, ts, 'user',
+                    provider, model, title=user_title(entry.get('content')) if titles else '',
+                    file_id=file_id))
+            elif role == 'assistant':
+                result.append(event(salt, 'workbuddy', session, project, record_id, ts, 'assistant',
+                    provider, model, workbuddy_status(entry.get('status')),
+                    workbuddy_usage(data.get('usage')), file_id=file_id))
+        elif typ == 'ai-title':
+            result.append(event(salt, 'workbuddy', session, project, record_id, ts, 'auxiliary',
+                provider, model, title=redact_title(entry.get('aiTitle')) if titles else '',
+                file_id=file_id))
+        elif typ == 'function_call':
+            result.append(event(salt, 'workbuddy', session, project, record_id, ts, 'tool',
+                provider, model, file_id=file_id))
+            if isinstance(data.get('usage'), dict):
+                result.append(event(salt, 'workbuddy', session, project, record_id + ':usage', ts,
+                    'usage', provider, model, values=workbuddy_usage(data['usage']), file_id=file_id))
+        elif typ == 'function_call_result' and entry.get('status') in ['cancelled', 'error']:
+            result.append(event(salt, 'workbuddy', session, project, record_id, ts, 'tool',
+                provider, model, workbuddy_status(entry.get('status')), file_id=file_id))
+    return result
+
+
 def tail_timestamp(path):
     """Timestamp of the newest record, or None when the last line is not a readable record.
 
@@ -240,8 +338,8 @@ def collect(root, source, salt, titles=False, max_files=100, window=None):
     from .projects import repository
     repository.cache_clear()  # A workspace can become a repository while the App is running.
     root = Path(root).expanduser().resolve()
-    if not root.is_dir() or source not in ['pi', 'codex']:
-        raise ValueError('Choose an existing Pi/Codex session directory')
+    if not root.is_dir() or source not in ['pi', 'codex', 'workbuddy']:
+        raise ValueError('Choose an existing Pi/Codex/WorkBuddy session directory')
     stats = {k: 0 for k in ['discovered', 'selected', 'irrelevant_files', 'omitted_files',
         'oversized_files', 'oversized_lines', 'truncated_files', 'partial_lines', 'malformed_lines',
         'invalid_timestamps', 'unreadable_files', 'symlinks_skipped', 'counter_resets',
@@ -280,7 +378,7 @@ def collect(root, source, salt, titles=False, max_files=100, window=None):
                 # Otherwise stream it: partial evidence beats silence, and records() stops
                 # at MAX_FILE and discloses the truncation.
             stats['selected'] += 1
-            parser = pi_events if source == 'pi' else codex_events
+            parser = {'pi': pi_events, 'codex': codex_events, 'workbuddy': workbuddy_events}[source]
             events.extend(parser(path, salt, stats, titles, window))
         except OSError:
             stats['unreadable_files'] += 1

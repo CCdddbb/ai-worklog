@@ -281,13 +281,18 @@ async function copyToClipboard(text) {
 	}
 	await navigator.clipboard.writeText(text);
 }
-$("copy-daily").addEventListener("click", async () => {
+const COPY_LABELS = { day: "今日日报", week: "本周周报", month: "本月月报" };
+const COPY_SCOPES = { day: "", week: "（所选日期所在周）", month: "（所选日期所在月）" };
+$("copy-report").addEventListener("click", async () => {
+	const chosen = $("copy-period").value;
+	const period = ["day", "week", "month"].includes(chosen) ? chosen : "day";
 	try {
-		const params = new URLSearchParams({ period: "day", detail: "clipboard" });
+		const params = new URLSearchParams({ period, detail: "clipboard" });
 		if ($("date").value) params.set("date", $("date").value);
 		const text = await (await api(`/api/report?${params}`)).text();
 		await copyToClipboard(text);
-		$("status").textContent = "今日日报已复制，可直接粘贴到日报系统。";
+		$("status").textContent =
+			`${COPY_LABELS[period]}已复制${COPY_SCOPES[period]}，可直接粘贴到报告系统。`;
 	} catch (error) {
 		$("status").textContent = `复制失败：${error.message}`;
 	}
@@ -376,6 +381,7 @@ function rememberLocation() {
 		summaryOpen: $("summary-help").open,
 		summaryPanelOpen: $("summary-panel").open,
 		period: $("report-period").value,
+		copyPeriod: $("copy-period").value,
 		detail: $("report-detail").value,
 		focusOnly: $("report-focus-only").checked,
 		taskId: window.worklogTasks?.selectedTaskId,
@@ -404,6 +410,9 @@ function updateBackButton() {
 				? "← 返回任务"
 				: `← 返回${label || "上一位置"}`;
 	$("navigation-location").textContent = $("heading").textContent;
+	// The home page has nowhere to go back to; the bar would only be noise there.
+	$("navigate-back").closest(".navigation-bar").hidden =
+		!previous && currentView() === "overview";
 }
 async function goBack() {
 	if (currentView() === "tasks" && $("task-create-panel").open) {
@@ -425,6 +434,7 @@ async function goBack() {
 		return;
 	}
 	$("report-period").value = position.period;
+	$("copy-period").value = position.copyPeriod || "day";
 	$("report-detail").value = position.detail;
 	$("report-focus-only").checked = position.focusOnly;
 	if (position.day && position.day !== $("date").value) {
@@ -433,6 +443,8 @@ async function goBack() {
 		await window.worklogTasks?.refresh();
 	}
 	if (position.view === "tasks" && window.worklogTasks) {
+		if (position.taskId)
+			await window.worklogTasks.ensureTask(position.taskId, position.day);
 		window.worklogTasks.selectedTaskId = position.taskId || null;
 		window.worklogTasks.taskFilter = position.taskFilter || "all";
 		$("task-search").value = position.taskSearch || "";
@@ -464,7 +476,8 @@ function applyViewContext(view) {
 	$("download").classList.toggle("primary", view === "report");
 	$("download").textContent = view === "weekly" ? "导出本周周报" : "导出报告";
 	$("open-tasks").classList.toggle("hidden", view !== "overview");
-	$("copy-daily").classList.toggle("hidden", view !== "overview");
+	$("copy-report").classList.toggle("hidden", view !== "overview");
+	$("copy-period-control").classList.toggle("hidden", view !== "overview");
 }
 async function showView(button, { remember = true, force = false } = {}) {
 	if (remember && (currentView() !== button.dataset.view || force))

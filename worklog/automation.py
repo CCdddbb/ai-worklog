@@ -310,7 +310,7 @@ def tick(service):
                     continue
                 markers[day] = digest
                 start, end = bounds(day, service.zone)
-                for row in db.execute("SELECT * FROM events WHERE ts>=? AND ts<=? AND ts<? AND source IN ('pi','codex') "
+                for row in db.execute("SELECT * FROM events WHERE ts>=? AND ts<=? AND ts<? AND source IN ('pi','codex','workbuddy') "
                                       "AND kind NOT IN ('usage','auxiliary') ORDER BY ts,id",
                                       (max(start, service.automation_since), now, end)):
                     item = dict(row)

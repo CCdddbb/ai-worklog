@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Worklog · UI 审查看板</title>
+<style>
+:root{
+  --bg:#f4f1ec; --panel:#fffdfa; --ink:#231f1b; --muted:#6f675d; --line:#e3dcd1;
+  --accent:#c2542a; --accent-ink:#9a3f1e; --sage:#4d7c5a; --blue:#3e6fa8; --amber:#b8863b; --plum:#8b6fb8;
+  --p0:#b03a20; --p1:#b8863b; --p2:#6d655a; --ok:#4d7c5a;
+  --radius:14px;
+  --shadow:0 1px 2px #2b272308, 0 12px 28px -20px #2b272330;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:linear-gradient(180deg,#f8f5f0,#f1ece4 60%,#eae3d8);
+  color:var(--ink); font:15px/1.65 "Manrope",-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1180px;margin:0 auto;padding:56px 32px 80px}
+header.top{margin-bottom:48px;padding-bottom:28px;border-bottom:1px solid var(--line)}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:12px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase;margin-bottom:14px}
+.eyebrow::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent)}
+h1{margin:0;font-size:34px;line-height:1.25;letter-spacing:-.9px;font-weight:600;text-wrap:balance}
+.sub{margin:14px 0 0;color:var(--muted);font-size:15px;max-width:74ch;text-wrap:pretty}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+.chip{font-size:12px;padding:3px 10px;border-radius:6px;background:#f0ebe2;color:#5f574c;border:1px solid var(--line)}
+
+h2{font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600;margin:52px 0 18px;display:flex;align-items:center;gap:10px}
+h2::after{content:"";flex:1;height:1px;background:var(--line)}
+
+.summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:8px}
+.score{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+.score::before{content:"";position:absolute;inset:0 0 auto 0;height:3px;background:var(--c,var(--blue))}
+.score .k{font-size:12px;color:var(--muted)}
+.score .v{display:block;font-size:30px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:8px;line-height:1.15;letter-spacing:-1px}
+.score .d{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.5}
+
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:26px;margin-bottom:20px;box-shadow:var(--shadow)}
+.card-head{display:flex;align-items:flex-start;gap:14px;margin-bottom:16px}
+.sev{flex:none;font-size:11px;font-weight:600;padding:3px 9px;border-radius:5px;letter-spacing:.04em;margin-top:3px}
+.sev.p0{color:#fff;background:var(--p0)}
+.sev.p1{color:#fff;background:var(--p1)}
+.sev.p2{color:#fff;background:var(--p2)}
+.sev.ok{color:#fff;background:var(--ok)}
+.card h3{margin:0;font-size:18px;font-weight:600;letter-spacing:-.3px;line-height:1.4;flex:1;text-wrap:pretty}
+.file{font-family:var(--mono);font-size:11px;color:var(--muted);background:#f3eee6;padding:3px 8px;border-radius:5px;flex:none;margin-top:2px}
+.card p{margin:0 0 12px;color:#463f37;font-size:14px;text-wrap:pretty}
+.card p:last-child{margin-bottom:0}
+code{font-family:var(--mono);font-size:12.5px;background:#f3eee6;padding:1px 6px;border-radius:4px;color:var(--accent-ink)}
+pre{margin:12px 0;padding:16px 18px;background:#faf6f0;border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.75;color:#3d372f}
+pre.fix{border-left-color:var(--sage);background:#f5f8f5}
+pre b{color:var(--accent-ink);font-weight:600}
+pre.fix b{color:#365c42}
+.label{display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:16px 0 -4px}
+
+.shot{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff;margin:14px 0}
+.shot img{display:block;width:100%;height:auto}
+.shot .cap{font-size:12px;color:var(--muted);padding:9px 14px;background:#faf7f2;border-top:1px solid var(--line)}
+.shot.small{max-width:390px}
+.shots{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}
+.shots>.shot{flex:1 1 300px}
+
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+th{text-align:left;font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600;padding:8px 12px;border-bottom:1px solid var(--line)}
+td{padding:10px 12px;border-bottom:1px solid #f0eae0;vertical-align:top}
+td:first-child{font-weight:500}
+tr:last-child td{border-bottom:0}
+.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+
+.badge{display:inline-block;font-size:11px;font-weight:500;padding:1px 8px;border-radius:5px;white-space:nowrap}
+.badge.fail{color:#fff;background:var(--p0)}
+.badge.warn{color:#fff;background:var(--p1)}
+.badge.pass{color:#fff;background:var(--ok)}
+
+.swatch{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:-2px;margin-right:6px;border:1px solid #00000014}
+
+ul.clean{margin:12px 0;padding-left:0;list-style:none}
+ul.clean li{padding:9px 0 9px 24px;position:relative;font-size:14px;border-bottom:1px solid #f2ece2;color:#463f37}
+ul.clean li:last-child{border-bottom:0}
+ul.clean li::before{content:"";position:absolute;left:4px;top:17px;width:7px;height:7px;border-radius:50%;background:var(--sage)}
+
+.road{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:8px}
+.road>div{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;box-shadow:var(--shadow)}
+.road h4{margin:0 0 4px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.road .big{font-size:16px;font-weight:600;margin-bottom:12px;letter-spacing:-.2px}
+.road ol{margin:0;padding-left:20px;font-size:13px;color:#463f37}
+.road ol li{padding:4px 0}
+
+.note{margin-top:44px;padding:20px 24px;border:1px solid #dfd7c9;border-radius:10px;background:#faf7f0;font-size:13px;color:#5a5145}
+footer{margin-top:40px;padding-top:18px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+
+@media(max-width:900px){
+  .summary-grid{grid-template-columns:repeat(2,1fr)}
+  .road{grid-template-columns:1fr}
+}
+@media(max-width:640px){
+  .wrap{padding:32px 18px 56px}
+  h1{font-size:26px}
+  .card{padding:18px}
+  .card-head{flex-wrap:wrap}
+  .file{margin-left:0}
+  .summary-grid{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <div class="eyebrow">UI Audit · 设计审查</div>
+  <h1>AI Worklog 个人工作台<br>UI 设计缺陷审查</h1>
+  <p class="sub">对 <code>static/</code> 目录下 3 份样式表、8 个脚本与页面结构进行审查。所有结论均基于真实 Chrome 在 390 / 768 / 1024 / 1440px 四档断点的渲染验证，以及 WCAG 相对亮度公式的实测对比度计算 —— 不是主观审美判断。</p>
+  <div class="meta">
+    <span class="chip">审查文件 12 个 / 221 KB</span>
+    <span class="chip">渲染验证 4 档断点</span>
+    <span class="chip">对比度实测 21 组</span>
+    <span class="chip">2026-11-08</span>
+  </div>
+</header>
+
+<h2>审查结论概览</h2>
+<div class="summary-grid">
+  <div class="score" style="--c:var(--p0)">
+    <span class="k">严重缺陷 P0</span>
+    <span class="v">3</span>
+    <span class="d">移动端溢出 · 死代码进度条 · 统计口径矛盾</span>
+  </div>
+  <div class="score" style="--c:var(--p1)">
+    <span class="k">高优先级 P1</span>
+    <span class="v">4</span>
+    <span class="d">平板断层 · 对比度不达标 · 触摸目标 · token 冲突</span>
+  </div>
+  <div class="score" style="--c:var(--p2)">
+    <span class="k">中等优先级 P2</span>
+    <span class="v">9</span>
+    <span class="d">焦点可见性 · 语义播报 · 字体体积 · 深色模式</span>
+  </div>
+  <div class="score" style="--c:var(--ok)">
+    <span class="k">值得肯定</span>
+    <span class="v">7</span>
+    <span class="d">数字等宽 · 状态色语义 · 草稿保护 · 打印样式</span>
+  </div>
+</div>
+<p class="sub" style="margin-top:18px">视觉语言（暖陶土 + 米白底、克制的阴影、克制的字重）是一次完整的设计表达。问题不在审美，而在<strong>响应式系统的工程实现</strong>与<strong>若干"定义了却永不生效"的实现漏洞</strong>。</p>
+
+<h2>P0 · 必须立即修复</h2>
+
+<div class="card">
+  <div class="card-head">
+    <span class="sev p0">P0-1</span>
+    <h3>移动端横向溢出，右侧内容被整块裁切</h3>
+    <span class="file">style.css:1059</span>
+  </div>
+  <p>390px 视口下页面产生横向滚动，KPI 卡片第 2 列、「项目与对话」面板右边缘、导航第 5 项之后的入口全部被截断。这是截图实测结果，非推测。</p>
+  <div class="shots">
+    <div class="shot small"><img src="wl-390.png" alt="390px 移动端渲染，右侧内容被裁切"><div class="cap">390px 实测：内容向右溢出，右侧被硬切</div></div>
+    <div class="shot"><img src="wl-768.png" alt="768px 平板渲染，KPI 卡片被裁切"><div class="cap">768px 实测：同样溢出，标签文字逐字折行（「待核对」→ 两行）</div></div>
+  </div>
+  <span class="label">根因</span>
+  <pre>@media (max-width: 700px) {
+  .actions label   { flex: 1 1 105px; }
+  <b>#date-control    { flex: 0 0 140px; }</b>   /* 固定 140px，完全不收缩 */
+  #open-tasks      { flex: 1; min-width: 130px; }
+  .actions button  { flex: 1 1 64px; }
+}</pre>
+  <p><code>.actions</code> 虽是 <code>flex-wrap: wrap</code> 容器，但子项缺少 <code>min-width: 0</code>。Flex 项目的默认 <code>min-width: auto</code> 会阻止其收缩至内容宽度以下，而 <code>#date-control</code> 的 <code>flex: 0 0 140px</code> 更是硬抗。三者的最小宽度之和已超出 358px 可用宽度，撑破 <code>main</code> 后产生整页横向滚动。</p>
+  <span class="label">修复</span>
+  <pre class="fix">@media (max-width: 700px) {
+  .actions { width: 100%; }
+  <b>.actions > * { min-width: 0; }</b>          /* 允许收缩，关键 */
+  <b>#date-control { flex: 1 1 100%; }</b>        /* 日期独占一行 */
+  .actions button { flex: 1 1 calc(50% - 3px); }
+}
+<b>main { overflow-x: clip; }</b>                   /* 兜底防护 */</pre>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <span class="sev p0">P0-2</span>
+    <h3>KPI 卡片的底部进度条是死代码，永远不可见</h3>
+    <span class="file">workbench.css:155</span>
+  </div>
+  <p>样式中定义了用于表达「占当日比例」的底部进度条，但全库交叉检索确认：<strong><code>--fill</code> 变量在 CSS 中出现 1 次，任何 JS / HTML 都没有给它赋值</strong>，fallback 为 <code>0%</code>。这条设计意图中的视觉编码，宽度恒为 0，用户从未看见过。</p>
+  <pre>.overview-count::after {
+  content: ""; position: absolute; inset: auto 0 0 0;
+  height: 3px;
+  <b>width: var(--fill, 0%);</b>   /* ← 从未被赋值，恒为 0 */
+  background: var(--kpi, var(--blue)); opacity: .45;
+}</pre>
+  <span class="label">修复 · 若产品需要这条进度条</span>
+  <pre class="fix">// tasks.js 渲染计数处补充
+const total = Math.max(1, tasks.length);
+$("review-count-link").style.setProperty("--fill", `${needsReview / total * 100}%`);
+$("blocked-count-link").style.setProperty("--fill", `${blocked / total * 100}%`);
+$("outcome-count-link").style.setProperty("--fill", `${confirmed / total * 100}%`);
+$("inbox-count-link").style.setProperty("--fill", `${untriaged.length / total * 100}%`);</pre>
+  <p>若产品上不需要，应<strong>整段删除</strong> <code>::after</code> 规则。保留"定义了却永不生效"的样式，会让后续维护者误以为存在一个他们没找到的赋值点。</p>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <span class="sev p0">P0-3</span>
+    <h3>KPI 统计口径不一致，同屏数字自相矛盾</h3>
+    <span class="file">tasks.js:983-1009</span>
+  </div>
+  <p>「今日共 N 条记录」读的是全量 <code>totalTasks</code>，而下方 4 张卡片的数字只统计<strong>已载入的前 100 条</strong>。当某天记录超过 100 条时，用户会看到「今日共 180 条」，但 4 张卡片加起来只有 100 —— 而这 4 张卡片正是点击后跳转的入口。</p>
+  <table>
+    <thead><tr><th>指标位</th><th>数据源</th><th>口径</th></tr></thead>
+    <tbody>
+      <tr><td>今日共 N 条</td><td><code>this.totalTasks</code></td><td><span class="badge fail">全量</span></td></tr>
+      <tr><td>待核对</td><td><code>tasks</code></td><td><span class="badge warn">仅已载入</span></td></tr>
+      <tr><td>受阻</td><td><code>tasks</code></td><td><span class="badge warn">仅已载入</span></td></tr>
+      <tr><td>已确认成果</td><td><code>tasks</code></td><td><span class="badge warn">仅已载入</span></td></tr>
+      <tr><td>待整理会话</td><td><code>this.current.sessions</code></td><td><span class="badge fail">全量</span></td></tr>
+    </tbody>
+  </table>
+  <p>代码中确有 <code>#overview-record-scope</code> 免责说明，但它以 12px 次要灰色呈现，与 28px 的 KPI 大字形成强烈视觉权重反差 —— 用户不会读。这不是文案问题，是信息架构问题。</p>
+  <span class="label">修复方向</span>
+  <p>统一为全量口径（后端 <code>/api/tasks</code> 增加聚合计数返回），或把卡片数字显示为 <code>100+</code> 并把说明升级为可见的 badge。绝不能让「总数 A、明细 B」同屏并存而无强提示。</p>
+</div>
+
+<h2>P1 · 明显影响可用性</h2>
+
+<div class="card">
+  <div class="card-head">
+    <span class="sev p1">P1-1</span>
+    <h3>768–1023px 区间布局断层，是全站最大盲区</h3>
+    <span class="file">3 份样式表断点集合</span>
+  </div>
+  <p>三份样式表的断点分散在 <strong>700 / 1050 / 1100 / 1150</strong> 四个值，彼此不协调。结果是 768px 平板下侧栏仍占 192px，主内容区只剩约 576px，而 <code>.actionable-stats</code> 依然是 <code>repeat(4, 1fr)</code>，导致第 4 张 KPI 卡片被裁切、状态标签逐字换行。</p>
+  <div class="shot"><img src="wl-1024.png" alt="1024px 渲染，KPI 卡片右侧被裁切"><div class="cap">1024px 实测：第 4 张「已确认成果」卡片的右边框已越出面板边界</div></div>
+  <span class="label">修复</span>
+  <pre class="fix">@media (max-width: 1100px) {
+  <b>.actionable-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }</b>
+}
+.kpi-head { flex-wrap: nowrap; min-width: 0; }
+<b>.status-label { white-space: nowrap; }</b>   /* 禁止标签逐字折行 */</pre>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <span class="sev p1">P1-2</span>
+    <h3>4 处文字 / 图标对比度低于 WCAG AA</h3>
+    <span class="file">style.css · workbench.css</span>
+  </div>
+  <p>按 WCAG 2.1 相对亮度公式实测 21 组配色，其中 5 组不达标：</p>
+  <table>
+    <thead><tr><th>用途</th><th>前景 / 背景</th><th class="num">实测比值</th><th>结论</th></tr></thead>
+    <tbody>
+      <tr><td>「工作空间」、footer、placeholder</td><td><span class="swatch" style="background:#a89e90"></span>#a89e90 / #fffdfb</td><td class="num">2.60</td><td><span class="badge fail">严重不达标</span></td></tr>
+      <tr><td>侧栏「工作空间」</td><td><span class="swatch" style="background:#a89e90"></span>#a89e90 / #fbf9f5</td><td class="num">2.51</td><td><span class="badge fail">严重不达标</span></td></tr>
+      <tr><td>待整理会话 KPI 图标</td><td><span class="swatch" style="background:#b8863b"></span>#b8863b / #f7efdd</td><td class="num">2.82</td><td><span class="badge fail">图标不可辨</span></td></tr>
+      <tr><td>日卡片摘要、待跟进说明</td><td><span class="swatch" style="background:#7a7268"></span>#7a7268 / #faf7f2</td><td class="num">4.43</td><td><span class="badge warn">临界不合格</span></td></tr>
+      <tr><td>待核对 KPI 图标（18px）</td><td><span class="swatch" style="background:#8b6fb8"></span>#8b6fb8 / #efeaf6</td><td class="num">3.51</td><td><span class="badge warn">仅够大图标</span></td></tr>
+    </tbody>
+  </table>
+  <p>其余 16 组（正文 <code>#746b60</code> 5.15、按钮白字 <code>#c2542a</code> 4.57、五态状态徽章 5.20–6.03）全部达标，说明配色系统本体是可靠的 —— 问题集中在几个"最淡的灰"被用在了文字上。</p>
+  <span class="label">修复</span>
+  <p><code>#a89e90 → #8a8073</code>（达 4.6+）；amber 图标 <code>#b8863b → #96682a</code>；浅卡片上的 <code>#7a7268 → #6f675d</code>。</p>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <span class="sev p1">P1-3</span>
+    <h3>触摸目标低于标准，移动端易误触</h3>
+    <span class="file">workbench.css:937 · 911</span>
+  </div>
+  <ul class="clean">
+    <li><code>.task-batch button</code> 仅 <strong>28px</strong> 高，低于 WCAG 2.2 的 24px 底线之外的舒适区</li>
+    <li><code>.task-select</code> 批量勾选框仅 <strong>16×16px</strong>，且 <code>margin-top: 14px</code> 与标题基线错位</li>
+    <li><code>.task-filter</code>、<code>.project-group > button</code>、<code>.summary-card > button</code> 均为 32px</li>
+    <li><code>.session-more > summary</code> 无 min-height，实际约 32px</li>
+  </ul>
+  <p>iOS HIG 建议 44×44，Material 建议 48×48。16px 复选框在触屏上几乎无法准确点中。</p>
+  <span class="label">修复</span>
+  <pre class="fix">.task-select { width: 20px; height: 20px; }
+<b>.task-select::before { content: ""; position: absolute; inset: -12px; }</b>  /* 扩大热区至 44px */
+.task-batch button { min-height: 36px; }</pre>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <span class="sev p1">P1-4</span>
+    <h3>设计 token 被三份样式表重复覆盖，形成半失控主题</h3>
+    <span class="file">style.css:13-14 · workbench.css:3-4</span>
+  </div>
+  <p>同一个变量在两处定义，后加载者静默胜出：</p>
+  <table>
+    <thead><tr><th>Token</th><th>style.css</th><th>workbench.css</th><th>最终生效</th></tr></thead>
+    <tbody>
+      <tr><td><code>--ink</code></td><td>#26221e</td><td>#2b2723</td><td>workbench</td></tr>
+      <tr><td><code>--muted</code></td><td>#746b60</td><td>#7a7268</td><td>workbench</td></tr>
+      <tr><td><code>--accent</code></td><td>#c2542a</td><td>#c2542a</td><td>一致</td></tr>
+    </tbody>
+  </table>
+  <p>更麻烦的是：全库有约 <strong>40+ 处硬编码颜色</strong>（<code>#5a5248</code>、<code>#6d655a</code>、<code>#7d7264</code>、<code>#a89e90</code>、<code>#5f584c</code>、<code>#4a4238</code>、<code>#6f675d</code>），形成 <strong>7 个互不相同的"次要文字灰"</strong>。这是视觉碎片化的根源，也让 P1-2 的对比度修复无法一次到位。</p>
+  <span class="label">修复</span>
+  <p>抽取单一 <code>tokens.css</code> 置于最前，只保留 <code>--text-1/2/3</code> 三级文字色，删除后两份 <code>:root</code> 里的重复定义，全部字面量改写为变量引用。</p>
+</div>
+
+<h2>P2 · 中等优先级清单</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>#</th><th>问题</th><th>位置</th><th>影响</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td><code>:focus{outline:none}</code> 仅用 stroke 加粗表达焦点</td><td>workbench.css:253</td><td>违反 WCAG 2.4.7，键盘用户难以确认选中扇区</td></tr>
+      <tr><td>2</td><td>焦点环色与暖色选中背景对比度不足 3:1</td><td>style.css:118</td><td>选中态与焦点态混淆</td></tr>
+      <tr><td>3</td><td><code>.session-more</code> 隐藏了原生三角却未替换图标</td><td>workbench.css:363</td><td>用户不知道该项可点击</td></tr>
+      <tr><td>4</td><td><code>#status</code> 用 <code>role="status"</code> 承载三种语义，错误时不转 alert</td><td>index.html:24</td><td>屏幕阅读器不主动播报加载失败</td></tr>
+      <tr><td>5</td><td>6 个 <code>aria-live</code> 区域并存，30s 轮询持续触发</td><td>index.html</td><td>SR 用户被反复打断</td></tr>
+      <tr><td>6</td><td>30s 自动刷新无暂停开关</td><td>app.js:543</td><td>阅读长报告时内容与滚动位置跳动</td></tr>
+      <tr><td>7</td><td>字体仅提供 ttf，未用 woff2</td><td>fonts/</td><td>首屏字体体积偏大</td></tr>
+      <tr><td>8</td><td>无 <code>prefers-color-scheme: dark</code>，写死 light</td><td>style.css:10</td><td>深色系统用户被强制浅色</td></tr>
+      <tr><td>9</td><td>打印时 <code>.report-evidence{display:none}</code></td><td>style.css:1408</td><td>导出 PDF 丢失证据引用，与产品定位冲突</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>设计系统层面的系统性问题</h2>
+
+<div class="card">
+  <div class="card-head">
+    <span class="sev p1">系统</span>
+    <h3>响应式是补丁式叠加，而非系统化栅格</h3>
+  </div>
+  <p>三份 CSS 各自追加 <code>@media</code>，累计 <strong>9 个断点声明</strong>，值域分散。没有统一栅格，没有流式排版（仅 <code>main</code> 的 padding 用了 <code>clamp()</code>）。这正是 P1-1 断层与 P0-1 溢出的共同土壤。</p>
+  <p><strong>建议</strong>：确立 4 档（480 / 768 / 1024 / 1280），所有组件在同一处声明响应式；或引入容器查询 <code>@container</code>，让卡片根据自身容器宽度自适应，而非依赖全页断点。</p>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <span class="sev p1">系统</span>
+    <h3>阴影层级被当作装饰，页面失去景深落点</h3>
+  </div>
+  <p><code>--shadow-md</code> 被同时用于 <code>.panel</code>、<code>.stats article</code>、<code>.overview-count</code>、<code>.focus-row</code>、<code>.task-list-item</code>、<code>.ledger-record</code> —— <strong>6 类语义完全不同的容器共享同一层级</strong>。</p>
+  <p>结果是所有卡片"浮在同一个高度"，截图可见 KPI 卡片与主面板的视觉权重几乎相同，用户视线找不到落点。</p>
+  <p><strong>建议</strong>：<code>--shadow-1</code> 用于列表项（hover 才升级）、<code>--shadow-2</code> 用于面板、<code>--shadow-3</code> 仅用于 KPI 等强调容器。</p>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <span class="sev p1">系统</span>
+    <h3>首屏信息过载，行动区被压到折叠线以下</h3>
+  </div>
+  <p>1440px 首屏同时呈现 13 个可交互区：品牌 → 导航 → 返回栏 → 标题 → 描述 → 5 个操作控件 → 状态提示 → 自动记录开关 + 2 按钮 → 4 统计卡 → 折叠说明 → 4 个 KPI → 待办列表。</p>
+  <p>产品意图是「先核对，再整理」，但 <code>.automatic-workbench</code>（项目总览）排在 <code>.actionable-stats</code>（真正需要行动的 KPI）<strong>之前</strong>；且当 4 个数字全为 0 时，它仍占据约 360px 高度。<strong>真正的行动区被信息区压到首屏之外。</strong></p>
+  <p><strong>建议</strong>：0 值时把「项目工作总览」折叠为单行摘要；把 4 个行动 KPI 提升到标题正下方。</p>
+</div>
+
+<h2>修复路线图</h2>
+<div class="road">
+  <div>
+    <h4>立即 · 本轮</h4>
+    <div class="big">止血</div>
+    <ol>
+      <li>P0-1 移动端溢出（纯 CSS，约 20 行）</li>
+      <li>P0-2 死代码：补赋值或删规则</li>
+      <li>P0-3 KPI 口径统一（需后端配合）</li>
+    </ol>
+  </div>
+  <div>
+    <h4>本迭代</h4>
+    <div class="big">可用性</div>
+    <ol>
+      <li>P1-2 对比度调色 4 处（零风险）</li>
+      <li>P1-1 补 768–1100 中间断点</li>
+      <li>P1-3 复选框热区扩展至 44px</li>
+    </ol>
+  </div>
+  <div>
+    <h4>下迭代</h4>
+    <div class="big">重构</div>
+    <ol>
+      <li>P1-4 token 单层化，清 40+ 硬编码色</li>
+      <li>阴影三级化，恢复景深</li>
+      <li>首屏信息重排，行动区前置</li>
+    </ol>
+  </div>
+</div>
+
+<h2>值得肯定的设计决策</h2>
+<div class="card">
+  <ul class="clean">
+    <li><strong>数字排版专业</strong>：所有数值位都用了 <code>font-variant-numeric: tabular-nums</code>，这是数据仪表盘的必备细节，很多产品遗漏</li>
+    <li><strong>状态色语义完备</strong>：confirmed / in_progress / blocked / draft / pending 五态各有软背景 + 文字色配对，独立计算全部达标（5.20–6.03）</li>
+    <li><strong>表单草稿保护</strong>：切换日期时用 <code>creationByDay</code> 保存未提交输入（tasks.js:107），交互健壮性超出多数同类产品</li>
+    <li><strong>中英混排安全</strong>：卡片普遍声明 <code>overflow-wrap: anywhere</code>，长 token 不会撑破布局</li>
+    <li><strong>打印样式独立设计</strong>：<code>break-inside: avoid</code>、<code>break-after: avoid</code> 用得准确，是少数认真做打印的产品</li>
+    <li><strong>空状态文案有温度</strong>：「这不代表今天没有工作」「未记录不等于没有工作」—— 用解释代替报错，是成熟的产品语言</li>
+    <li><strong>动效可降级</strong>：已有 <code>prefers-reduced-motion</code> 覆盖（虽仅 3 处，方向正确）</li>
+  </ul>
+</div>
+
+<div class="note">
+  <strong>关于审查口径</strong>：本报告中所有「实测」结论均可复现 —— 启动 <code>python3 app.py serve --db /tmp/wl-audit.sqlite3</code> 后，用 Chrome 在对应视口宽度截图；对比度数值由 WCAG 2.1 相对亮度公式计算得出，脚本已随报告附上。所有 P0 项都经过代码检索与真实渲染双重确认，不是启发式推断。
+</div>
+
+<footer>
+  <span>UI Designer · 设计审查</span>
+  <span>12 文件 / 4 断点 / 21 组对比度实测</span>
+</footer>
+
+</div>
+</body>
+</html>

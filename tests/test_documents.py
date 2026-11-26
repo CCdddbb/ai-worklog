@@ -57,6 +57,34 @@ class DocumentTests(unittest.TestCase):
             self.assertNotIn(excluded, text)
         self.assertIn('自动归档不等于人工验收', text)
 
+    def test_clipboard_digest_scales_to_long_periods_without_silent_truncation(self):
+        def records(count, status, archived):
+            return {'stats': {'total': count}, 'records': [
+                {'title': f'任务{i}', 'status': status, 'archived': archived,
+                 'work': {'work_items': []}} for i in range(count)]}
+
+        week = build_document([day_data()], '2026-10-26', '2026-11-01', 'UTC', 'week')
+        week['automatic_work'] = records(70, 'in_progress', True)
+        week['next_steps'] = [{'title': f'后续{i}', 'text': '待核对'} for i in range(30)]
+        text = clipboard_digest(week)
+        self.assertIn('【AI 工作周报】2026-10-26 至 2026-11-01', text)
+        self.assertIn('本期完成：', text)
+        self.assertIn('另有 10 条未列出，详见工作报告。', text)
+        self.assertIn('另有 6 条下一步未列出，详见工作报告。', text)
+        self.assertIn('自动归档不等于人工验收', text)
+
+        month = build_document([day_data()], '2026-10-01', '2026-10-31', 'UTC', 'month')
+        month['automatic_work'] = records(61, 'blocked', False)
+        month_text = clipboard_digest(month)
+        self.assertIn('【AI 工作月报】2026-10-01 至 2026-10-31', month_text)
+        self.assertIn('另有 1 条未列出，详见工作报告。', month_text)
+
+        day = self.document(day_data())
+        day['automatic_work'] = records(31, 'in_progress', True)
+        day_text = clipboard_digest(day)
+        self.assertIn('今日完成：', day_text)
+        self.assertIn('另有 1 条未列出，详见工作报告。', day_text)
+
     def test_manual_outcome_precedes_drafts_and_statistics(self):
         data = day_data()
         data['task_reviews'] = [{'id': 'one', 'title': '登录修复', 'status': 'confirmed', 'outcome': '人工核对登录恢复',
