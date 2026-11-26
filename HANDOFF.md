@@ -8,8 +8,9 @@
 - 架构：app.py → worklog.cli；adapters/ide/git_evidence 采集，store(SQLite) 存储，tasks/automation/conversations 组织整理，documents/reporting 输出；web 为标准库本地 HTTP 服务，static 为网页资源，desktop/macos 为 Swift 外壳。版本0.8.0，Python>=3.9，无必需第三方运行依赖。
 - 测试配置：CI 在 Python3.9/3.12/3.13 执行 unittest，Node22 检查 JS，macOS 构建签名检查。本轮未执行，不能据此判断测试通过。
 - 文档注意：README 新增常驻 agent/install-agent 能力，但旧段仍称不是后台常驻、没有配置自启动；跨日归并描述也有新旧口径差异，待后续任务核实。
-- 新任务：用户已授权将全部改动提交并推送 GitHub，目标 origin/main，不强推。
+- 提交任务：已完成，idle。用户授权全部改动提交并推送 origin/main，未强推。
 - 提交前核查：git diff --check 通过；待提交文本未命中本机绝对用户路径、常见令牌与私钥标记；UI 审查桌面截图为虚构演示数据。个人 data/ 与缓存保持忽略。
 - 验证：Python unittest 233 项全部通过；static/*.js、tests/*.cjs 全部 node --check 通过；git diff --check 通过。
 - 静态检查未全绿：ty 返回26条诊断（含提示，集中在 documents/tasks/web/ide 的类型推断及动态属性），ruff 有8条风格警告；未改代码修复，不将其表述为全绿。此处只记录发布前检查，不扩大提交任务范围。
-- 下一步：提交所有非忽略改动并正常推送 origin/main；静态诊断留待专门修复任务。
+- 提交结果：ba2ee60（39文件，含 WorkBuddy、后台 Agent、工作流优化、测试及UI审查材料）已成功推送 GitHub origin/main；随后同步本交接完成状态。被忽略的个人数据库与缓存未上传。
+- 下一步：本次提交任务结束；静态诊断留待用户授权的专门修复任务，无自动修复计划。
